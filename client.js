@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b67'
+    const BUILD = 'b68'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -46,9 +46,6 @@ window.__ModuleLoader__.load({
       blurBottom: 18,
       scrim: 0.1,
       surface: 52,
-      motion: true,
-      vignette: 26,
-      vivid: 108,
       zoom: 100,
       posX: 0,
       posY: 0,
@@ -75,9 +72,6 @@ window.__ModuleLoader__.load({
       blur: DEFAULTS.blur,
       scrim: DEFAULTS.scrim,
       fit: DEFAULTS.fit,
-      motion: DEFAULTS.motion,
-      vignette: DEFAULTS.vignette,
-      vivid: DEFAULTS.vivid,
       blurMain: DEFAULTS.blurMain,
       blurSide: DEFAULTS.blurSide,
       blurRight: DEFAULTS.blurRight,
@@ -116,12 +110,6 @@ window.__ModuleLoader__.load({
         blurSide: 'Sidebar',
         blurRight: 'Right rail',
         blurBottom: 'Bottom bar',
-        display: 'Picture',
-        displayHint: 'How the wallpaper itself is drawn behind the glass.',
-        motion: 'Slow drift',
-        motionHint: 'A still wallpaper pans almost imperceptibly instead of sitting frozen.',
-        vignette: 'Edge falloff',
-        vivid: 'Saturation',
         zoom: 'Zoom',
         posX: 'Horizontal',
         posY: 'Vertical',
@@ -139,7 +127,7 @@ window.__ModuleLoader__.load({
         preview: 'Live preview',
         previewHint: 'The real wallpaper, drawn with the same fills, frost and dimming the window gets — drag a slider and watch it.',
         advanced: 'Advanced',
-        advancedHint: 'Blur, drift, saturation and per-block frosting.',
+        advancedHint: 'Blur and per-block frosting.',
         reset: 'Reset to defaults',
         fitAutoHint: 'Same shapes as Wallpaper Engine: Fill crops to fill, Fit shows the whole picture, Stretch ignores the aspect, Centre keeps 1:1 pixels. Auto picks Fill unless the picture is far from your screen shape.',
         fitCoverHint: 'Fill the window, cropping the overflow (Wallpaper Engine: Fill).',
@@ -204,12 +192,6 @@ window.__ModuleLoader__.load({
         blurSide: '侧栏',
         blurRight: '右栏',
         blurBottom: '底栏',
-        display: '画面',
-        displayHint: '壁纸本身怎么画在玻璃后面。',
-        motion: '缓慢漂移',
-        motionHint: '静态壁纸会极慢地平移缩放，不显得死板。',
-        vignette: '边缘压暗',
-        vivid: '饱和度',
         zoom: '缩放',
         posX: '左右',
         posY: '上下',
@@ -391,8 +373,7 @@ window.__ModuleLoader__.load({
         for (const key of Object.keys(DEFAULTS)) {
           if (!Object.prototype.hasOwnProperty.call(stored, key)) continue
           if (!sameSheet && (key === 'surface' || key === 'blur' || key === 'scrim' || key === 'fit' ||
-            key === 'blurMain' || key === 'blurSide' || key === 'blurRight' || key === 'blurBottom' ||
-            key === 'motion' || key === 'vignette' || key === 'vivid')) continue
+            key === 'blurMain' || key === 'blurSide' || key === 'blurRight' || key === 'blurBottom')) continue
           next[key] = stored[key]
         }
       }
@@ -405,12 +386,9 @@ window.__ModuleLoader__.load({
       next.blurRight = clamp(Number(next.blurRight), 0, 32, DEFAULTS.blurRight)
       next.blurBottom = clamp(Number(next.blurBottom), 0, 32, DEFAULTS.blurBottom)
       next.scrim = clamp(Number(next.scrim), 0, 0.75, DEFAULTS.scrim)
-      next.vignette = clamp(Number(next.vignette), 0, 70, DEFAULTS.vignette)
-      next.vivid = clamp(Number(next.vivid), 60, 160, DEFAULTS.vivid)
       next.zoom = clamp(Number(next.zoom), 100, 300, DEFAULTS.zoom)
       next.posX = clamp(Number(next.posX), -50, 50, DEFAULTS.posX)
       next.posY = clamp(Number(next.posY), -50, 50, DEFAULTS.posY)
-      next.motion = next.motion !== false
       next.enabled = next.enabled !== false
       next.muted = next.muted !== false
       next.paused = next.paused === true
@@ -718,11 +696,6 @@ window.__ModuleLoader__.load({
         styleBase: styleRefs.base ? styleRefs.base.textContent.length : -1,
         stylePaint: styleRefs.paint ? styleRefs.paint.textContent.length : -1,
         luminance: wallpaperLuminance === null ? -1 : wallpaperLuminance,
-        ambientA: wallpaperAmbient.a,
-        ambientB: wallpaperAmbient.b,
-        motion: settings.motion !== false,
-        vignette: Number(settings.vignette),
-        vivid: Number(settings.vivid),
         fit: reportFit.mode,
         fitSetting: reportFit.setting,
         fitBackdrop: reportFit.backdrop,
@@ -736,13 +709,6 @@ window.__ModuleLoader__.load({
         zoom: reportFit.zoom,
         posX: reportFit.posX,
         posY: reportFit.posY,
-        fitFill: (() => {
-          try {
-            return document.querySelector('.dsh-we-backdrop-fill') ? 'present' : 'none'
-          } catch {
-            return 'error'
-          }
-        })(),
         previewCard: (() => {
           try {
             const card = document.querySelector('[data-dsh-preview="true"]')
@@ -750,22 +716,11 @@ window.__ModuleLoader__.load({
             const image = card.querySelector('.dsh-we-preview-media')
             const side = card.querySelector('.dsh-we-preview-side')
             const box = card.querySelector('.dsh-we-preview')
-            const fill = card.querySelector('.dsh-we-preview-fill')
             return [
               image ? (image.getAttribute('src') ? 'img' : 'blank') : 'missing',
               side ? getComputedStyle(side).backgroundColor : 'noside',
               box ? box.getAttribute('data-fit') : 'nobox',
-              fill ? 'fill' : 'flat',
             ].join('/')
-          } catch {
-            return 'error'
-          }
-        })(),
-        driftActive: (() => {
-          try {
-            const node = document.querySelector('.dsh-we-backdrop')
-            const media = document.querySelector('.dsh-we-backdrop-media')
-            return `${node ? node.getAttribute('data-motion') : 'missing'}/${media ? getComputedStyle(media).animationName : 'missing'}`
           } catch {
             return 'error'
           }
@@ -1267,6 +1222,27 @@ window.__ModuleLoader__.load({
         }
       } catch (error) {
         add('preview.card', false, (error && error.message) || 'preview probe failed')
+      }
+      // One wallpaper means one picture: a second media node or a blurred copy
+      // behind it is exactly what made the preview look like two wallpapers.
+      try {
+        const card = document.querySelector('[data-dsh-preview="true"]')
+        if (card) {
+          const media = card.querySelectorAll('.dsh-we-preview-media').length
+          const copies = card.querySelectorAll('.dsh-we-preview-fill').length
+          add('preview.singleMedia', media === 1 && copies === 0, `media=${media} copies=${copies}`)
+        } else {
+          add('preview.singleMedia', true, 'settings closed')
+        }
+      } catch (error) {
+        add('preview.singleMedia', false, (error && error.message) || 'preview probe failed')
+      }
+      try {
+        const media = document.querySelectorAll('.dsh-we-backdrop-media').length
+        const copies = document.querySelectorAll('.dsh-we-backdrop-fill').length
+        add('backdrop.singleMedia', media === 1 && copies === 0, `media=${media} copies=${copies}`)
+      } catch (error) {
+        add('backdrop.singleMedia', false, (error && error.message) || 'backdrop probe failed')
       }
       // A binding is only proven by dispatching the real events: dragging must
       // move the crop, the corner + button must zoom, and neither may throw.
@@ -1943,20 +1919,17 @@ window.__ModuleLoader__.load({
     /** Average luminance of the current wallpaper (0..1), or null if unknown. */
     let wallpaperLuminance = null
 
-    /** Two accent colours pulled from the wallpaper itself (empty until measured). */
-    let wallpaperAmbient = { a: '', b: '' }
-
     /** Last fit decision, carried into the renderer report. */
     let reportFit = { mode: 'cover', setting: 'auto', backdrop: false, aspect: null, zoom: DEFAULTS.zoom, posX: DEFAULTS.posX, posY: DEFAULTS.posY }
 
     /**
-     * Measure a loaded image or video frame in a tiny canvas: average luminance
-     * (drives the veil and the ink ladder) plus up to two saturated accent
-     * colours (drive the ambient tint behind the glass).
+     * Average luminance of one loaded frame, measured in a tiny canvas.
+     * Two things use it: how strong the veil has to be at an extreme, and the
+     * ink ladder. Nothing else is derived from the picture.
      */
-    function sampleWallpaper(node) {
+    function sampleLuminance(node) {
       try {
-        const size = 32
+        const size = 24
         const canvas = document.createElement('canvas')
         canvas.width = size
         canvas.height = size
@@ -1965,56 +1938,13 @@ window.__ModuleLoader__.load({
         context.drawImage(node, 0, 0, size, size)
         const pixels = context.getImageData(0, 0, size, size).data
         let sum = 0
-        const bins = new Map()
         for (let index = 0; index < pixels.length; index += 4) {
-          const red = pixels[index]
-          const green = pixels[index + 1]
-          const blue = pixels[index + 2]
-          sum += (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255
-          const max = Math.max(red, green, blue)
-          const min = Math.min(red, green, blue)
-          // Skip near-grey pixels: their hue is noise, not a palette colour.
-          if (max - min < 42 || max < 28 || min > 236) continue
-          const hue = hueOf(red, green, blue)
-          const key = Math.floor(hue / 30)
-          const bin = bins.get(key) || { count: 0, red: 0, green: 0, blue: 0 }
-          bin.count += 1
-          bin.red += red
-          bin.green += green
-          bin.blue += blue
-          bins.set(key, bin)
+          sum += (0.2126 * pixels[index] + 0.7152 * pixels[index + 1] + 0.0722 * pixels[index + 2]) / 255
         }
-        const ranked = [...bins.entries()]
-          .sort((left, right) => right[1].count - left[1].count)
-          .map(([, bin]) => ({
-            count: bin.count,
-            red: Math.round(bin.red / bin.count),
-            green: Math.round(bin.green / bin.count),
-            blue: Math.round(bin.blue / bin.count),
-          }))
-        const first = ranked[0]
-        const second = ranked.find((bin) => !first || Math.abs(hueOf(bin.red, bin.green, bin.blue) - hueOf(first.red, first.green, first.blue)) > 60)
-        return {
-          luminance: sum / (pixels.length / 4),
-          a: first ? `rgb(${first.red}, ${first.green}, ${first.blue})` : '',
-          b: second ? `rgb(${second.red}, ${second.green}, ${second.blue})` : '',
-        }
+        return sum / (pixels.length / 4)
       } catch {
         return null
       }
-    }
-
-    /** Hue in degrees of an rgb triple. */
-    function hueOf(red, green, blue) {
-      const max = Math.max(red, green, blue)
-      const min = Math.min(red, green, blue)
-      const span = max - min
-      if (span === 0) return 0
-      let hue
-      if (max === red) hue = ((green - blue) / span) % 6
-      else if (max === green) hue = (blue - red) / span + 2
-      else hue = (red - green) / span + 4
-      return (hue * 60 + 360) % 360
     }
 
     /** Store a fresh measurement and repaint the veil it drives. */
@@ -2025,22 +1955,9 @@ window.__ModuleLoader__.load({
       paintTheme()
     }
 
-    /** Remember the wallpaper palette so the ambient layer can use it. */
-    function setWallpaperAmbient(colors) {
-      const next = {
-        a: colors && colors.a ? colors.a : '',
-        b: colors && colors.b ? colors.b : '',
-      }
-      if (next.a === wallpaperAmbient.a && next.b === wallpaperAmbient.b) return
-      wallpaperAmbient = next
-      emit()
-    }
-
-    /** Feed one loaded frame into both measurements. */
+    /** Feed one loaded frame into the measurement. */
     function absorbWallpaper(node) {
-      const sample = sampleWallpaper(node)
-      setWallpaperLuminance(sample ? sample.luminance : null)
-      setWallpaperAmbient(sample)
+      setWallpaperLuminance(sampleLuminance(node))
     }
 
     // ------------------------------------------------------------------
@@ -2065,8 +1982,6 @@ window.__ModuleLoader__.load({
 .dsh-we-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .dsh-we-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 /* A field that owns a control on its right: label + hint on the left. */
-.dsh-we-field[data-inline="true"] { flex-direction: row; align-items: center; justify-content: space-between; gap: 14px; }
-.dsh-we-field-grow { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .dsh-we-field-label { color: var(--dsw-alias-label-secondary); font-size: 11px; font-weight: 500; letter-spacing: .02em; text-transform: uppercase; }
 .dsh-we-value { color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; font-size: 11px; }
 .dsh-we-slider { display: flex; align-items: center; gap: 10px; }
@@ -2145,15 +2060,8 @@ window.__ModuleLoader__.load({
 .dsh-we-preview-zoom button:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dsh-we-preview-zoom span { min-width: 42px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-secondary); }
-.dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; }
-.dsh-we-preview-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-.dsh-we-preview-fill { position: absolute; inset: -6%; background-size: cover; background-position: center;
-  opacity: .92; transform: scale(1.04); filter: blur(18px) saturate(1.1); }
-.dsh-we-preview-ambient { position: absolute; inset: -12%; mix-blend-mode: soft-light; opacity: .62; pointer-events: none;
-  background: radial-gradient(58% 52% at 24% 20%, var(--dsh-we-ambient-a, transparent), transparent 72%),
-    radial-gradient(54% 48% at 80% 76%, var(--dsh-we-ambient-b, transparent), transparent 74%); }
-body[data-ds-dark-theme] .dsh-we-preview-ambient { mix-blend-mode: screen; opacity: .34; }
-.dsh-we-preview-veil, .dsh-we-preview-vignette { position: absolute; inset: 0; pointer-events: none; }
+.dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; background: var(--dsw-alias-bg-base); }
+.dsh-we-preview-media { position: absolute; display: block; }
 .dsh-we-preview-shell { position: absolute; inset: 0; }
 .dsh-we-preview-side { position: absolute; left: 0; top: 0; bottom: 0; width: 23%; min-width: 0;
   border-right: .5px solid var(--dsw-alias-border-l2); }
@@ -2174,34 +2082,8 @@ body[data-ds-dark-theme] .dsh-we-preview-ambient { mix-blend-mode: screen; opaci
    them and the per-block blur sliders look dead. -1 is taken by the blur
    layers inside the columns; -2 is left free for future scrim layers. */
 .dsh-we-backdrop { position: fixed; inset: 0; z-index: -3; pointer-events: none; overflow: hidden; contain: strict; }
-/* The zoom lives on this wrapper so the drift animation can keep owning the
-   media's transform; the crop position lives in object-position. */
 .dsh-we-backdrop-viewport { position: absolute; inset: 0; overflow: hidden; }
-.dsh-we-backdrop-media { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover;
-  transform-origin: 50% 50%; will-change: transform; }
-/* When the picture is kept whole, its own blurred copy fills the bars so the
-   edges belong to the wallpaper instead of a black band. */
-.dsh-we-backdrop-fill { position: absolute; inset: -4%; width: 108%; height: 108%; display: block; object-fit: cover;
-  filter: blur(34px) saturate(1.12) brightness(.94); }
-/* Slow drift so a still wallpaper breathes instead of looking pasted on. */
-.dsh-we-backdrop[data-motion="true"] .dsh-we-backdrop-media {
-  animation: dsh-we-drift 48s ease-in-out infinite alternate; }
-@keyframes dsh-we-drift {
-  from { transform: scale(1.03) translate3d(0, 0, 0); }
-  to { transform: scale(1.11) translate3d(-1.4%, -1.8%, 0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dsh-we-backdrop[data-motion="true"] .dsh-we-backdrop-media { animation: none; transform: scale(1.04); }
-}
-/* Palette pulled from the wallpaper: tints the glass so panels look like they
-   belong to the picture instead of floating on top of it. */
-.dsh-we-backdrop-ambient { position: absolute; inset: -12%; mix-blend-mode: soft-light; opacity: .62;
-  background:
-    radial-gradient(58% 52% at 24% 20%, var(--dsh-we-ambient-a, transparent), transparent 72%),
-    radial-gradient(54% 48% at 80% 76%, var(--dsh-we-ambient-b, transparent), transparent 74%); }
-body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opacity: .34; }
-/* Edge falloff: keeps the chrome corners readable while the middle stays vivid. */
-.dsh-we-backdrop-vignette { position: absolute; inset: 0; }
+.dsh-we-backdrop-media { position: absolute; display: block; }
 .dsh-we-backdrop-scrim { position: absolute; inset: 0; }
 .dsh-we-select { font: inherit; font-size: 12px; padding: 5px 8px; border-radius: 8px; color: var(--dsw-alias-label-primary);
   background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-3)); border: 1px solid var(--dsw-alias-border-l1);
@@ -2308,7 +2190,6 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       // A new wallpaper invalidates the measured brightness until it loads.
       useEffect(() => {
         setWallpaperLuminance(null)
-        setWallpaperAmbient(null)
         setMediaAspect(null)
       }, [url])
 
@@ -2322,15 +2203,10 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       if (!url) return null
 
       const blur = clamp(Number(settings.blur), 0, 32, 0)
-      const vivid = clamp(Number(settings.vivid), 60, 160, DEFAULTS.vivid) / 100
-      const vignette = clamp(Number(settings.vignette), 0, 70, DEFAULTS.vignette) / 100
       const fitSetting = settings.fit
       const viewportAspect = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : 16 / 9
       const shell = placement(fitSetting, mediaAspect, viewportAspect)
-      const motion = settings.motion !== false && shell.mode !== 'contain' && shell.mode !== 'center'
-      const filters = []
-      if (blur > 0) filters.push(`blur(${blur}px)`)
-      if (Math.abs(vivid - 1) > 0.01) filters.push(`saturate(${vivid.toFixed(2)})`)
+      const filter = blur > 0 ? `blur(${blur}px)` : undefined
       const frame = framing(settings.zoom, settings.posX, settings.posY)
       const mediaStyle = {
         objectFit: shell.objectFit,
@@ -2343,10 +2219,9 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         top: `${frame.topPct}%`,
         right: 'auto',
         bottom: 'auto',
-        filter: filters.length ? filters.join(' ') : undefined,
-        // The drift animation owns `transform`; without it a blur needs its own
-        // overscale so the soft edge never shows inside the viewport.
-        transform: !motion && blur > 0 && shell.mode !== 'center' ? 'scale(1.06)' : undefined,
+        filter,
+        // A blur softens the media's own edge, so overscale it slightly.
+        transform: blur > 0 && shell.mode !== 'center' ? 'scale(1.06)' : undefined,
         transition: 'opacity .35s ease',
       }
       reportFit = {
@@ -2358,43 +2233,18 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         posX: frame.posX,
         posY: frame.posY,
       }
-      const fillUrl = shell.backdrop ? (isVideo ? (item.preview ? mediaUrl(item.preview) : '') : url) : ''
-
-      const vignetteStyle = {
-        background: [
-          `linear-gradient(180deg, rgba(0, 0, 0, ${(vignette * 0.9).toFixed(3)}) 0%, rgba(0, 0, 0, 0) 16%, rgba(0, 0, 0, 0) 72%, rgba(0, 0, 0, ${(vignette * 1.1).toFixed(3)}) 100%)`,
-          `radial-gradient(128% 108% at 50% 46%, rgba(0, 0, 0, 0) 46%, rgba(0, 0, 0, ${(vignette * 0.8).toFixed(3)}) 100%)`,
-        ].join(', '),
-      }
-
-      const ambientStyle = {
-        '--dsh-we-ambient-a': wallpaperAmbient.a || 'transparent',
-        '--dsh-we-ambient-b': wallpaperAmbient.b || 'transparent',
-        opacity: wallpaperAmbient.a || wallpaperAmbient.b ? undefined : 0,
-      }
 
       const layer = h(
         'div',
         {
           className: 'dsh-we-backdrop',
           'data-dsh-wallpaper-backdrop': item.id,
-          'data-motion': motion ? 'true' : 'false',
           'data-fit': shell.mode,
           'aria-hidden': 'true',
         },
         h(
           'div',
           { className: 'dsh-we-backdrop-viewport' },
-          fillUrl
-            ? h('img', {
-                className: 'dsh-we-backdrop-fill',
-                src: fillUrl,
-                alt: '',
-                draggable: false,
-                'aria-hidden': 'true',
-                style: { objectPosition: frame.objectPosition },
-              })
-            : null,
           isVideo
             ? h('video', {
                 key: url,
@@ -2434,8 +2284,6 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                 onError: () => reportRenderer('image-error'),
               }),
         ),
-        h('div', { className: 'dsh-we-backdrop-ambient', style: ambientStyle }),
-        h('div', { className: 'dsh-we-backdrop-vignette', style: vignetteStyle }),
         h('div', { className: 'dsh-we-backdrop-scrim', style: { background: 'var(--dsh-we-scrim, rgba(0, 0, 0, 0))' } }),
       )
 
@@ -2633,15 +2481,10 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const levels = surfaces()
       const blocks = blockBlur()
       const blur = clamp(Number(settings.blur), 0, 32, 0)
-      const vivid = clamp(Number(settings.vivid), 60, 160, DEFAULTS.vivid) / 100
-      const vignette = clamp(Number(settings.vignette), 0, 70, DEFAULTS.vignette) / 100
       const veil = scrimAlpha(themeKey)
       const tint = dark ? '20, 21, 26' : '255, 255, 255'
       const fillOf = (percent) => `rgba(${tint}, ${(clamp(percent, 0, 100, 0) / 100).toFixed(3)})`
       const frostOf = (pixels) => (Number(pixels) > 0 ? `blur(${Number(pixels)}px) saturate(1.1)` : undefined)
-      const filters = []
-      if (blur > 0) filters.push(`blur(${blur}px)`)
-      if (Math.abs(vivid - 1) > 0.01) filters.push(`saturate(${vivid.toFixed(2)})`)
       // Same decision the real backdrop makes for this window, then drawn
       // inside a box that has the window's exact shape — that is what makes the
       // preview honest instead of a decorative mock.
@@ -2658,16 +2501,16 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         posXDraft === null ? settings.posX : posXDraft,
         posYDraft === null ? settings.posY : posYDraft,
       )
-      const vignetteStyle = {
-        background: [
-          `linear-gradient(180deg, rgba(0, 0, 0, ${(vignette * 0.9).toFixed(3)}) 0%, rgba(0, 0, 0, 0) 16%, rgba(0, 0, 0, 0) 72%, rgba(0, 0, 0, ${(vignette * 1.1).toFixed(3)}) 100%)`,
-          `radial-gradient(128% 108% at 50% 46%, rgba(0, 0, 0, 0) 46%, rgba(0, 0, 0, ${(vignette * 0.8).toFixed(3)}) 100%)`,
-        ].join(', '),
-      }
-      const ambientStyle = {
-        '--dsh-we-ambient-a': wallpaperAmbient.a || 'transparent',
-        '--dsh-we-ambient-b': wallpaperAmbient.b || 'transparent',
-        opacity: wallpaperAmbient.a || wallpaperAmbient.b ? undefined : 0,
+      const mediaBox = {
+        objectFit: shell.objectFit,
+        objectPosition: frame.objectPosition,
+        width: `${frame.widthPct}%`,
+        height: `${frame.heightPct}%`,
+        left: `${frame.leftPct}%`,
+        top: `${frame.topPct}%`,
+        right: 'auto',
+        bottom: 'auto',
+        filter: blur > 0 ? `blur(${blur}px)` : undefined,
       }
       return h(
         'div',
@@ -2756,16 +2599,6 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           h(
             'div',
             { className: 'dsh-we-preview-viewport' },
-            shell.backdrop && url
-              ? h('div', {
-                  className: 'dsh-we-preview-fill',
-                  style: {
-                    backgroundImage: `url("${url}")`,
-                    backgroundPosition: 'center',
-                    filter: filters.length ? filters.join(' ') : undefined,
-                  },
-                })
-              : null,
             url
               ? isVideoPreview
                 ? h('video', {
@@ -2776,17 +2609,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                     autoPlay: true,
                     playsInline: true,
                     disablePictureInPicture: true,
-                    style: {
-                      objectFit: shell.objectFit,
-                      objectPosition: frame.objectPosition,
-                      width: `${frame.widthPct}%`,
-                      height: `${frame.heightPct}%`,
-                      left: `${frame.leftPct}%`,
-                      top: `${frame.topPct}%`,
-                      right: 'auto',
-                      bottom: 'auto',
-                      filter: filters.length ? filters.join(' ') : undefined,
-                    },
+                    style: mediaBox,
                     onLoadedData: (event) => {
                       const node = event.currentTarget
                       setPreviewAspect(node.videoWidth && node.videoHeight ? node.videoWidth / node.videoHeight : 0)
@@ -2799,17 +2622,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                     draggable: false,
                     loading: 'lazy',
                     decoding: 'async',
-                    style: {
-                      objectFit: shell.objectFit,
-                      objectPosition: frame.objectPosition,
-                      width: `${frame.widthPct}%`,
-                      height: `${frame.heightPct}%`,
-                      left: `${frame.leftPct}%`,
-                      top: `${frame.topPct}%`,
-                      right: 'auto',
-                      bottom: 'auto',
-                      filter: filters.length ? filters.join(' ') : undefined,
-                    },
+                    style: mediaBox,
                     onLoad: (event) => {
                       const node = event.currentTarget
                       setPreviewAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : 0)
@@ -2817,8 +2630,6 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                   })
               : h('div', { className: 'dsh-we-preview-media', style: { background: 'var(--dsw-alias-bg-layer-2)' } }),
           ),
-          wallpaperAmbient.a || wallpaperAmbient.b ? h('div', { className: 'dsh-we-preview-ambient', style: ambientStyle }) : null,
-          h('div', { className: 'dsh-we-preview-vignette', style: vignetteStyle }),
           veil > 0.004
             ? h('div', { className: 'dsh-we-preview-veil', style: { background: `rgba(${dark ? '0, 0, 0' : '255, 255, 255'}, ${veil.toFixed(3)})` } })
             : null,
@@ -3196,43 +3007,6 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                     step: 1,
                     display: `${settings.blur}px`,
                     onChange: (blur) => updateSettings({ blur }),
-                  }),
-                ),
-                h(
-                  'div',
-                  { key: 'motion', className: 'dsh-we-field', 'data-inline': 'true' },
-                  h(
-                    'div',
-                    { className: 'dsh-we-field-grow' },
-                    h('span', { className: 'dsh-we-field-label' }, t('motion')),
-                    h('div', { className: 'dsh-we-row-hint' }, t('motionHint')),
-                  ),
-                  h(Switch, {
-                    checked: settings.motion !== false,
-                    onChange: (motion) => updateSettings({ motion }),
-                    title: t('motion'),
-                  }),
-                ),
-                h(
-                  'div',
-                  { key: 'look', className: 'dsh-we-grid' },
-                  h(Slider, {
-                    label: t('vignette'),
-                    value: settings.vignette,
-                    min: 0,
-                    max: 70,
-                    step: 1,
-                    display: `${settings.vignette}%`,
-                    onChange: (vignette) => updateSettings({ vignette }),
-                  }),
-                  h(Slider, {
-                    label: t('vivid'),
-                    value: settings.vivid,
-                    min: 60,
-                    max: 160,
-                    step: 2,
-                    display: `${settings.vivid}%`,
-                    onChange: (vivid) => updateSettings({ vivid }),
                   }),
                 ),
                 h(
