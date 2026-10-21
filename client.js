@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b71'
+    const BUILD = 'b74'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -119,9 +119,7 @@ window.__ModuleLoader__.load({
         sidebarPanel: 'Wallpaper',
         back: 'Back',
         recentEmpty: 'Nothing here yet',
-        openSidebarPanel: 'Open in the sidebar',
-        sidebarOnlyHint: 'This panel lives in the sidebar, so the conversation stays in view.',
-        scrim: 'Dim',
+                    scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
         fitCover: 'Fill',
@@ -205,9 +203,7 @@ window.__ModuleLoader__.load({
         sidebarPanel: '壁纸',
         back: '返回',
         recentEmpty: '还没有用过壁纸',
-        openSidebarPanel: '在侧栏打开',
-        sidebarOnlyHint: '这个面板显示在左侧栏，会话界面保持可见。',
-        scrim: '压暗',
+                    scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
         fitCover: '填充',
@@ -1156,7 +1152,7 @@ window.__ModuleLoader__.load({
             ['stretch', wide, 'fill', false],
             ['center', square, 'none', true],
             ['auto', wide, 'cover', false],
-            ['auto', square, 'contain', true],
+            ['auto', square, 'cover', false],
           ]
           const rows = cases.map(([setting, aspect, fit, backdrop]) => {
             const got = placement(setting, aspect, wide)
@@ -1366,22 +1362,27 @@ window.__ModuleLoader__.load({
         if (!glyph) {
           add('sidebar.panel', false, 'glyph missing')
         } else {
+          selfTestStep = 'sidebar.panel: click'
           glyph.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
           await wait(260)
+          selfTestStep = 'sidebar.panel: opened'
           const opened = Boolean(document.querySelector('.dsh-we-side'))
-          const rows = document.querySelectorAll('.dsh-we-side-row').length
+          const rows = document.querySelectorAll('.dsh-we-side .dsh-we-tile').length
+          const panelPreview = Boolean(document.querySelector('.dsh-we-side .dsh-we-preview'))
           const sessionsHidden = !document.querySelector('[class*="_treeBody"] [class*="_sessionRow"]')
           const back = document.querySelector('.dsh-we-side-back')
+          selfTestStep = 'sidebar.panel: back'
           if (back) back.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
           await wait(260)
+          selfTestStep = 'sidebar.panel: closed'
           const closed = !document.querySelector('.dsh-we-side')
           const sessionsBack = Boolean(document.querySelector('[class*="_treeBody"]'))
           const composerAfter = Boolean(document.querySelector('[data-composer-card], [data-composer-seat]'))
           const mainKept = composerBefore === composerAfter
           add(
             'sidebar.panel',
-            opened && rows > 0 && sessionsHidden && closed && sessionsBack && mainKept,
-            `open=${opened} rows=${rows} listHidden=${sessionsHidden} close=${closed} listBack=${sessionsBack} mainKept=${mainKept}`,
+            opened && rows > 0 && panelPreview && sessionsHidden && closed && sessionsBack && mainKept,
+            `open=${opened} rows=${rows} preview=${panelPreview} listHidden=${sessionsHidden} close=${closed} listBack=${sessionsBack} mainKept=${mainKept}`,
           )
           if (!closed) setSidebarOpen(false)
         }
@@ -1683,7 +1684,7 @@ window.__ModuleLoader__.load({
       const setting = FIT_MODES.includes(fitSetting) ? fitSetting : 'auto'
       const box = Number(boxAspect) > 0 ? Number(boxAspect) : 16 / 9
       const gap = Number(mediaAspect) > 0 ? Math.abs(Math.log(Number(mediaAspect) / box)) : 0
-      const mode = setting === 'auto' ? (Number(mediaAspect) > 0 && gap > 0.22 ? 'contain' : 'cover') : setting
+      const mode = setting === 'auto' ? (Number(mediaAspect) > 0 && gap > 0.75 ? 'contain' : 'cover') : setting
       const objectFit = mode === 'stretch' ? 'fill' : mode === 'center' ? 'none' : mode === 'contain' ? 'contain' : 'cover'
       return { setting, mode, objectFit, backdrop: mode === 'contain' || mode === 'center' }
     }
@@ -2209,6 +2210,16 @@ window.__ModuleLoader__.load({
 .dsh-we-side-row-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .dsh-we-side-row-title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dsh-we-side-row-meta { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
+.dsh-we-side-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
+.dsh-we-page.dsh-we-compact { gap: 12px; padding: 2px 0 12px; }
+.dsh-we-compact .dsh-we-head { gap: 10px; align-items: center; }
+.dsh-we-compact .dsh-we-sub { display: none; }
+.dsh-we-compact .dsh-we-title { font-size: 13px; }
+.dsh-we-compact .dsh-we-card { padding: 10px; border-radius: 10px; }
+.dsh-we-compact .dsh-we-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.dsh-we-compact .dsh-we-gallery { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+.dsh-we-compact .dsh-we-preview { height: min(150px, 20vh); }
+.dsh-we-compact .dsh-we-preview-meta { font-size: 10px; }
 /* z-index -3: the wallpaper has to sit BEHIND the per-block blur layers
    (::before with z-index -1), otherwise the opaque wallpaper paints over
    them and the per-block blur sliders look dead. -1 is taken by the blur
@@ -2890,32 +2901,6 @@ window.__ModuleLoader__.load({
     function SidebarWallpaperPanel() {
       useLocaleVersion()
       useStoreVersion()
-      const [query, setQuery] = useState('')
-      const [filter, setFilter] = useState('recent')
-      useEffect(() => {
-        if (!data.state) loadState()
-        if (!data.library) loadLibrary()
-      }, [])
-      const library = data.library
-      const items = (library && library.items) || []
-      const current = currentItem()
-      const visible = useMemo(() => {
-        const needle = query.trim().toLowerCase()
-        const matched = items.filter((item) => {
-          if (filter === 'local' && item.source !== 'local') return false
-          if (filter === 'recent' && !usage[item.id]) return false
-          if (filter !== 'all' && filter !== 'local' && filter !== 'recent' && item.kind !== filter) return false
-          if (needle === '') return true
-          const haystack = `${item.title || ''} ${(item.tags || []).join(' ')} ${item.workshopId || ''}`.toLowerCase()
-          return haystack.includes(needle)
-        })
-        return sortByUsage(matched)
-      }, [items, filter, query, usageVersion])
-      const pick = (item) => {
-        recordUse(item, 'pick')
-        updateSettings({ enabled: true, mode: 'pin', pinned: item })
-      }
-      const chips = ['recent', 'all', 'scene', 'video', 'web', 'local']
       return h(
         'div',
         { className: 'dsh-we-side' },
@@ -2935,103 +2920,22 @@ window.__ModuleLoader__.load({
           ),
           h('span', { className: 'dsh-we-side-title' }, t('sidebarPanel')),
         ),
-        current
-          ? h(
-              'div',
-              { className: 'dsh-we-side-now' },
-              current.preview
-                ? h('img', { className: 'dsh-we-side-thumb', src: mediaUrl(current.preview), alt: '', draggable: false })
-                : h('span', { className: 'dsh-we-side-thumb' }),
-              h(
-                'span',
-                { className: 'dsh-we-side-now-text' },
-                h('span', { className: 'dsh-we-side-now-title' }, current.title || t('unknown')),
-                h('span', { className: 'dsh-we-side-now-kind' }, current.kind === 'video' ? t('video') : t('scene')),
-              ),
-            )
-          : null,
-        h('input', {
-          className: 'dsh-we-side-search',
-          type: 'search',
-          value: query,
-          placeholder: t('search'),
-          onChange: (event) => setQuery(event.target.value),
-        }),
-        h(
-          'div',
-          { className: 'dsh-we-side-chips' },
-          chips.map((key) =>
-            h(
-              'button',
-              {
-                key,
-                type: 'button',
-                className: 'dsh-we-side-chip',
-                'data-active': filter === key ? 'true' : 'false',
-                onClick: () => setFilter(key),
-              },
-              t(key),
-            ),
-          ),
-        ),
-        h(
-          'div',
-          { className: 'dsh-we-side-list' },
-          visible.length === 0
-            ? h('div', { className: 'dsh-we-side-empty' }, filter === 'recent' ? t('recentEmpty') : t('empty'))
-            : visible.map((item) =>
-                h(
-                  'button',
-                  {
-                    key: item.id,
-                    type: 'button',
-                    className: 'dsh-we-side-row',
-                    'data-active': current && current.id === item.id ? 'true' : 'false',
-                    title: item.title || '',
-                    onClick: () => pick(item),
-                  },
-                  item.preview
-                    ? h('img', { className: 'dsh-we-side-row-thumb', src: mediaUrl(item.preview), alt: '', draggable: false, loading: 'lazy' })
-                    : h('span', { className: 'dsh-we-side-row-thumb' }),
-                  h(
-                    'span',
-                    { className: 'dsh-we-side-row-text' },
-                    h('span', { className: 'dsh-we-side-row-title' }, item.title || t('unknown')),
-                    h(
-                      'span',
-                      { className: 'dsh-we-side-row-meta' },
-                      `${item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene')}${
-                        usageOf(item.id).count > 1 ? ` · ×${usageOf(item.id).count}` : ''
-                      }`,
-                    ),
-                  ),
-                ),
-              ),
-        ),
+        h('div', { className: 'dsh-we-side-body' }, h(WallpaperSettings, { compact: true })),
       )
     }
 
-    /** What the main column shows if that panel id is selected there. */
-    function SidebarOnlyPage() {
-      useLocaleVersion()
-      useStoreVersion()
-      return h(
-        'div',
-        { className: 'dsh-we-page' },
-        h('div', { className: 'dsh-we-head' },
-          h('div', { className: 'dsh-we-titlebox' },
-            h('span', { className: 'dsh-we-title' }, t('sectionTitle')),
-            h('span', { className: 'dsh-we-sub' }, t('sidebarOnlyHint')),
-          ),
-        ),
-        h('div', { className: 'dsh-we-card' },
-          h('button', { type: 'button', className: 'dsh-we-btn', onClick: () => setSidebarOpen(true) }, t('openSidebarPanel')),
-        ),
-      )
+    /** The main column shows nothing: this panel lives in the sidebar. */
+    function WallpaperMainPanel() {
+      useEffect(() => {
+        const layout = hostCtx && (hostCtx.layout || (hostCtx.get ? hostCtx.get('layout') : undefined))
+        if (layout && typeof layout.selectPanel === 'function') layout.selectPanel('conversation')
+      }, [])
+      return null
     }
 
     /** The settings page. */
-    function WallpaperSettings() {
+    function WallpaperSettings(props) {
+      const compact = Boolean(props && props.compact)
       const [query, setQuery] = useState('')
       const [filter, setFilter] = useState('all')
       const [advanced, setAdvanced] = useState(false)
@@ -3083,7 +2987,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'dsh-we-page' },
+        { className: compact ? 'dsh-we-page dsh-we-compact' : 'dsh-we-page' },
         h(
           'div',
           { className: 'dsh-we-head' },
@@ -3565,7 +3469,7 @@ window.__ModuleLoader__.load({
         ),
       )
       slots.inject('main', () =>
-        registerSlot(() => slots.register({ name: 'main', key: 'wallpaper-engine' }, SidebarOnlyPage), 'main'),
+        registerSlot(() => slots.register({ name: 'main', key: 'wallpaper-engine' }, WallpaperMainPanel), 'main'),
       )
       slots.inject('settings.section', () =>
         registerSlot(
