@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b63'
+    const BUILD = 'b67'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -586,6 +586,9 @@ window.__ModuleLoader__.load({
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body || {}),
+          // A Host that stops answering must not freeze the caller forever
+          // (the self test runs inside a single await chain).
+          signal: AbortSignal.timeout(6000),
         })
       } catch (error) {
         const failure = new Error((error && error.message) || 'network error')
@@ -850,6 +853,8 @@ window.__ModuleLoader__.load({
 
     let lastVerifyToken = ''
     let selfTestBusy = false
+    let selfTestStartedAt = 0
+    let selfTestProgress = []
     let selfTestResult = null
     let pingTimer = null
 
@@ -1004,6 +1009,7 @@ window.__ModuleLoader__.load({
     /** Exercise the plugin end to end and remember the verdict. */
     async function runSelfTest(token) {
       const results = []
+      selfTestProgress = results
       const add = (name, ok, detail) => results.push({ name, ok: Boolean(ok), detail: String(detail ?? '').slice(0, 160) })
       const snapshot = { ...settings }
       try {
@@ -1224,7 +1230,10 @@ window.__ModuleLoader__.load({
         try {
           const item = currentItem()
           if (item && item.playFile) {
-            const response = await fetch(mediaUrl(item.playFile), { headers: { Range: 'bytes=0-99' } })
+            const response = await fetch(mediaUrl(item.playFile), {
+              headers: { Range: 'bytes=0-99' },
+              signal: AbortSignal.timeout(6000),
+            })
             add('media.range', response.status === 206, `status=${response.status}`)
             const body = await response.arrayBuffer()
             add('media.bytes', body.byteLength === 100, `bytes=${body.byteLength}`)
@@ -1270,6 +1279,11 @@ window.__ModuleLoader__.load({
           add('preview.wheelNeutral', true, 'settings closed')
           add('preview.wheelAlt', true, 'settings closed')
         } else {
+          const original = { zoom: settings.zoom, posX: settings.posX, posY: settings.posY }
+          // Panning needs overflow: at 100% the media exactly fills the box and
+          // a drag is deliberately inert, so zoom in first the way a user must.
+          updateSettings({ zoom: 200, posX: 0, posY: 0 })
+          await wait(160)
           const before = { zoom: settings.zoom, posX: settings.posX, posY: settings.posY }
           const boxRect = box.getBoundingClientRect()
           const base = { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', button: 0, isPrimary: true }
@@ -1279,7 +1293,7 @@ window.__ModuleLoader__.load({
           box.dispatchEvent(new PointerEvent('pointermove', { ...base, clientX: centerX - boxRect.width * 0.18, clientY: centerY }))
           box.dispatchEvent(new PointerEvent('pointerup', { ...base, clientX: centerX - boxRect.width * 0.18, clientY: centerY }))
           await wait(80)
-          add('preview.drag', settings.posX !== before.posX, `posX ${before.posX} → ${settings.posX}`)
+          add('preview.drag', settings.posX !== before.posX, `posX ${before.posX} → ${settings.posX} at zoom ${before.zoom}`)
           const zoomIn = box.querySelector('.dsh-we-preview-zoom button:last-of-type')
           if (zoomIn) zoomIn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
           await wait(80)
@@ -1293,7 +1307,7 @@ window.__ModuleLoader__.load({
           box.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120, altKey: true }))
           await wait(420)
           add('preview.wheelAlt', settings.zoom > neutralZoom, `zoom ${neutralZoom} → ${settings.zoom} with Alt`)
-          updateSettings({ zoom: before.zoom, posX: before.posX, posY: before.posY })
+          updateSettings({ zoom: original.zoom, posX: original.posX, posY: original.posY })
           await wait(60)
         }
       } catch (error) {
@@ -1317,6 +1331,27 @@ window.__ModuleLoader__.load({
     function startVerifyPolling() {
       stopVerifyPolling()
       pingTimer = window.setInterval(async () => {
+        // A run that never settles (for example a fetch the shell never
+        // resolves) must not block every later run: give it one deadline.
+        if (selfTestBusy && Date.now() - selfTestStartedAt > 25000) {
+          selfTestBusy = false
+          selfTestResult = {
+            token: lastVerifyToken,
+            at: new Date().toISOString(),
+            build: BUILD,
+            ok: false,
+            failed: ['selftest.timeout'],
+            results: [
+              {
+                name: 'selftest.timeout',
+                ok: false,
+                detail: `no verdict after ${Math.round((Date.now() - selfTestStartedAt) / 1000)}s`,
+              },
+              ...selfTestProgress.slice(0, 60).map((row) => ({ name: `stalled-after ${row.name}`, ok: row.ok, detail: row.detail })),
+            ],
+          }
+          reportRenderer('self-test')
+        }
         if (selfTestBusy) return
         let value = null
         try {
@@ -1327,6 +1362,7 @@ window.__ModuleLoader__.load({
         if (!value || !value.verify || value.verify === lastVerifyToken) return
         lastVerifyToken = String(value.verify)
         selfTestBusy = true
+        selfTestStartedAt = Date.now()
         reportRenderer('self-test-start')
         try {
           await runSelfTest(lastVerifyToken)
@@ -2109,7 +2145,7 @@ window.__ModuleLoader__.load({
 .dsh-we-preview-zoom button:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dsh-we-preview-zoom span { min-width: 42px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-secondary); }
-.dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; transform-origin: 50% 50%; will-change: transform; }
+.dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; }
 .dsh-we-preview-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .dsh-we-preview-fill { position: absolute; inset: -6%; background-size: cover; background-position: center;
   opacity: .92; transform: scale(1.04); filter: blur(18px) saturate(1.1); }
@@ -2140,7 +2176,7 @@ body[data-ds-dark-theme] .dsh-we-preview-ambient { mix-blend-mode: screen; opaci
 .dsh-we-backdrop { position: fixed; inset: 0; z-index: -3; pointer-events: none; overflow: hidden; contain: strict; }
 /* The zoom lives on this wrapper so the drift animation can keep owning the
    media's transform; the crop position lives in object-position. */
-.dsh-we-backdrop-viewport { position: absolute; inset: 0; overflow: hidden; transform-origin: 50% 50%; will-change: transform; }
+.dsh-we-backdrop-viewport { position: absolute; inset: 0; overflow: hidden; }
 .dsh-we-backdrop-media { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover;
   transform-origin: 50% 50%; will-change: transform; }
 /* When the picture is kept whole, its own blurred copy fills the bars so the
