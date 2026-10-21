@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b79'
+    const BUILD = 'b83'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -1344,6 +1344,7 @@ window.__ModuleLoader__.load({
           add('preview.zoomButtons', true, 'settings closed')
           add('preview.wheel', true, 'settings closed')
           add('preview.wheelLimit', true, 'settings closed')
+        add('preview.parity', true, 'settings closed')
         } else {
           const original = { zoom: settings.zoom, posX: settings.posX, posY: settings.posY }
           // Panning needs overflow: at 100% the media exactly fills the box and
@@ -1378,6 +1379,33 @@ window.__ModuleLoader__.load({
           box.dispatchEvent(limitEvent)
           await wait(300)
           add('preview.wheelLimit', settings.zoom === 300 && !limitEvent.defaultPrevented, `zoom=${settings.zoom} prevented=${limitEvent.defaultPrevented}`)
+          // Parity: the preview and the real layer must agree on how much of the
+          // box the picture covers (this is what "居中时预览和窗口对不上" was).
+          const previewBox = document.querySelector('.dsh-we-preview')
+          const previewMedia = document.querySelector('.dsh-we-preview .dsh-we-preview-media')
+          const backBox = document.querySelector('.dsh-we-backdrop-viewport')
+          const backMedia = document.querySelector('.dsh-we-backdrop-media')
+          if (previewBox && previewMedia && backBox && backMedia) {
+            // Coverage = how much of the box width the picture itself takes. The
+            // element path is width%, the background path is a pixel size that
+            // already carries the box/window ratio; both divide by the box width.
+            const coverage = (box, media) => {
+              const boxRect = box.getBoundingClientRect()
+              if (!boxRect.width || !boxRect.height) return 0
+              const size = getComputedStyle(media).backgroundSize
+              if (size && size !== 'auto' && size.indexOf('px') > 0) {
+                return parseFloat(size) / boxRect.width
+              }
+              return media.getBoundingClientRect().width / boxRect.width
+            }
+            const ratio = Number(settings.zoom) / 100
+            const previewCover = coverage(previewBox, previewMedia)
+            const backCover = coverage(backBox, backMedia)
+            const same = Math.abs(previewCover - backCover) < 0.03
+            add('preview.parity', same, `preview=${previewCover.toFixed(3)} window=${backCover.toFixed(3)} zoom=${ratio.toFixed(2)}`)
+          } else {
+            add('preview.parity', true, 'surface missing')
+          }
           updateSettings({ zoom: original.zoom, posX: original.posX, posY: original.posY })
           await wait(60)
         }
@@ -1386,6 +1414,7 @@ window.__ModuleLoader__.load({
         add('preview.zoomButtons', false, (error && error.message) || 'dispatch failed')
         add('preview.wheel', false, (error && error.message) || 'dispatch failed')
         add('preview.wheelLimit', false, (error && error.message) || 'dispatch failed')
+        add('preview.parity', false, (error && error.message) || 'dispatch failed')
       }
       if (openedPreviewPanel) {
         setSidebarOpen(false)
@@ -2211,7 +2240,7 @@ window.__ModuleLoader__.load({
 .dsh-we-now-meta { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 /* Mock desktop: the same fills, frost and veil the real window gets, drawn in a
    small box so a slider can be judged without leaving the settings page. */
-.dsh-we-preview { position: relative; width: auto; max-width: 100%; height: min(300px, 36vh); margin: 0 auto; border-radius: 12px; overflow: hidden;
+.dsh-we-preview { position: relative; width: 100%; max-width: 100%; height: auto; max-height: min(320px, 40vh); margin: 0 auto; border-radius: 12px; overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); isolation: isolate;
   cursor: grab; touch-action: none; user-select: none; }
 .dsh-we-preview:active { cursor: grabbing; }
@@ -2284,7 +2313,7 @@ window.__ModuleLoader__.load({
 .dsh-we-compact .dsh-we-card { padding: 10px; border-radius: 10px; }
 .dsh-we-compact .dsh-we-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .dsh-we-compact .dsh-we-gallery { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
-.dsh-we-compact .dsh-we-preview { height: min(150px, 20vh); }
+.dsh-we-compact .dsh-we-preview { width: 100%; height: auto; }
 .dsh-we-compact .dsh-we-preview-meta { font-size: 10px; }
 /* z-index -3: the wallpaper has to sit BEHIND the per-block blur layers
    (::before with z-index -1), otherwise the opaque wallpaper paints over
@@ -2342,6 +2371,7 @@ window.__ModuleLoader__.load({
       // Natural shape of the current media: `auto` fit needs it to decide
       // between filling the screen and keeping the picture whole.
       const [mediaAspect, setMediaAspect] = useState(null)
+      const [natural, setNatural] = useState({ w: 0, h: 0 })
       const item = currentItem()
       const url = item ? mediaUrl(item.playFile) : ''
       const isVideo = Boolean(item && item.playKind === 'video')
@@ -2443,6 +2473,25 @@ window.__ModuleLoader__.load({
         posY: frame.posY,
       }
 
+      // `object-fit: none` (centre mode) draws the picture at its pixel size, so
+      // zoom would not scale it. Draw it as a background instead: exact size and
+      // offset, and the preview can reproduce the same crop by scaling the ratio.
+      const naturalWidth = natural.w
+      const naturalHeight = natural.h
+      const centreStyle =
+        shell.mode === 'center' && naturalWidth > 0
+          ? {
+              position: 'absolute',
+              inset: 0,
+              backgroundImage: `url("${url}")`,
+              backgroundRepeat: 'no-repeat',
+              backgroundSize: `${(naturalWidth * Number(frame.scale)).toFixed(1)}px ${(naturalHeight * Number(frame.scale)).toFixed(1)}px`,
+              backgroundPosition: `calc(50% + ${(((Number(frame.leftPct) / 100) * window.innerWidth) || 0).toFixed(1)}px) calc(50% + ${(((Number(frame.topPct) / 100) * window.innerHeight) || 0).toFixed(1)}px)`,
+              filter,
+              transition: 'opacity .35s ease',
+            }
+          : null
+
       const layer = h(
         'div',
         {
@@ -2454,7 +2503,9 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dsh-we-backdrop-viewport' },
-          isVideo
+          centreStyle
+            ? h('div', { key: url, className: 'dsh-we-backdrop-media dsh-we-backdrop-centre', style: centreStyle })
+            : isVideo
             ? h('video', {
                 key: url,
                 ref: videoRef,
@@ -2471,6 +2522,7 @@ window.__ModuleLoader__.load({
                 onLoadedData: (event) => {
                   const node = event.currentTarget
                   setMediaAspect(node.videoWidth && node.videoHeight ? node.videoWidth / node.videoHeight : null)
+                  setNatural({ w: node.videoWidth || 0, h: node.videoHeight || 0 })
                   absorbWallpaper(node)
                   reportRenderer('video-loaded')
                 },
@@ -2487,6 +2539,7 @@ window.__ModuleLoader__.load({
                 onLoad: (event) => {
                   const node = event.currentTarget
                   setMediaAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : null)
+                  setNatural({ w: node.naturalWidth || 0, h: node.naturalHeight || 0 })
                   absorbWallpaper(node)
                   reportRenderer('image-load')
                 },
@@ -2721,6 +2774,37 @@ window.__ModuleLoader__.load({
         bottom: 'auto',
         filter: blur > 0 ? `blur(${blur}px)` : undefined,
       }
+      // `object-fit: none` draws the picture at its pixel size, so a small
+      // preview box would show a different crop than the window. In centre mode
+      // the picture is drawn as a background sized by the box/window ratio, so
+      // both show the same region.
+      const boxRef = useRef(null)
+      const [boxWidth, setBoxWidth] = useState(0)
+      const [natural, setNatural] = useState({ w: 0, h: 0 })
+      useEffect(() => {
+        const node = boxRef.current
+        if (!node || typeof ResizeObserver === 'undefined') return undefined
+        const observer = new ResizeObserver((entries) => {
+          const rect = entries[0] && entries[0].contentRect
+          if (rect && rect.width > 0) setBoxWidth(rect.width)
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+      }, [])
+      const windowWidth = typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280
+      const ratio = boxWidth > 0 ? boxWidth / windowWidth : 0
+      const centreMode = shell.mode === 'center' && natural.w > 0 && ratio > 0
+      const centreStyle = centreMode
+        ? {
+            position: 'absolute',
+            inset: 0,
+            backgroundImage: `url("${url}")`,
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: `${(natural.w * Number(frame.scale) * ratio).toFixed(1)}px ${(natural.h * Number(frame.scale) * ratio).toFixed(1)}px`,
+            backgroundPosition: `calc(50% + ${((Number(frame.leftPct) / 100) * windowWidth * ratio).toFixed(1)}px) calc(50% + ${((Number(frame.topPct) / 100) * (windowWidth / windowAspect) * ratio).toFixed(1)}px)`,
+            filter: blur > 0 ? `blur(${blur}px)` : undefined,
+          }
+        : null
       return h(
         'div',
         { className: 'dsh-we-field', 'data-dsh-preview': 'true' },
@@ -2728,6 +2812,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             className: 'dsh-we-preview',
+            ref: boxRef,
             'data-fit': shell.mode,
             style: { aspectRatio: windowAspect.toFixed(3) },
             title: t('framingHint'),
@@ -2819,7 +2904,9 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'dsh-we-preview-viewport' },
             url
-              ? isVideoPreview
+              ? centreMode
+                ? h('div', { className: 'dsh-we-preview-media dsh-we-preview-centre', style: centreStyle })
+                : isVideoPreview
                 ? h('video', {
                     className: 'dsh-we-preview-media',
                     src: url,
@@ -2832,6 +2919,7 @@ window.__ModuleLoader__.load({
                     onLoadedData: (event) => {
                       const node = event.currentTarget
                       setPreviewAspect(node.videoWidth && node.videoHeight ? node.videoWidth / node.videoHeight : 0)
+                      setNatural({ w: node.videoWidth || 0, h: node.videoHeight || 0 })
                     },
                   })
                 : h('img', {
@@ -2845,6 +2933,7 @@ window.__ModuleLoader__.load({
                     onLoad: (event) => {
                       const node = event.currentTarget
                       setPreviewAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : 0)
+                      setNatural({ w: node.naturalWidth || 0, h: node.naturalHeight || 0 })
                     },
                   })
               : h('div', { className: 'dsh-we-preview-media', style: { background: 'var(--dsw-alias-bg-layer-2)' } }),
@@ -3095,7 +3184,11 @@ window.__ModuleLoader__.load({
           }),
         ),
 
-        h(
+        // In the narrow sidebar the status block is only worth the space when it
+        // has something to say (an error); otherwise the preview comes first.
+        compact && !data.error
+          ? null
+          : h(
           'div',
           { className: 'dsh-we-card' },
           h('div', { className: 'dsh-we-row-hint' }, t('enableHint')),
@@ -3152,10 +3245,12 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'dsh-we-card' },
           h(SafePreview, { item: displayItem }),
-          h(Row, {
-            name: t('mode'),
-            hint: t('modeHint'),
-          },
+          compact
+            ? null
+            : h(Row, {
+                name: t('mode'),
+                hint: t('modeHint'),
+              },
             h(
               'div',
               { className: 'dsh-we-seg' },
@@ -3179,7 +3274,7 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-          monitors.length > 1 && following
+          monitors.length > 1 && following && !compact
             ? h(
                 'div',
                 { className: 'dsh-we-field' },
@@ -3197,7 +3292,9 @@ window.__ModuleLoader__.load({
                 ),
               )
             : null,
-          h(
+          compact
+            ? null
+            : h(
             'div',
             { className: 'dsh-we-field' },
             h('span', { className: 'dsh-we-field-label' }, t('preset')),
@@ -3219,7 +3316,9 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-          h(
+          compact
+            ? null
+            : h(
             'div',
             { className: 'dsh-we-grid' },
             h(Slider, {
@@ -3265,7 +3364,9 @@ window.__ModuleLoader__.load({
               h('div', { className: 'dsh-we-row-hint' }, t('fitAutoHint')),
             ),
           ),
-          h(
+          compact
+            ? null
+            : h(
             'div',
             { className: 'dsh-we-chiprow' },
             h(
@@ -3300,6 +3401,50 @@ window.__ModuleLoader__.load({
           ),
           advanced
             ? [
+                // In the sidebar the look controls live here so the top of the
+                // panel stays preview + fit + library.
+                compact
+                  ? h(
+                      'div',
+                      { key: 'look', className: 'dsh-we-grid' },
+                      h(Slider, {
+                        label: t('surface'),
+                        value: settings.surface,
+                        min: 20,
+                        max: 100,
+                        step: 1,
+                        display: `${settings.surface}%`,
+                        onChange: (surface) => updateSettings({ surface }),
+                      }),
+                      h(Slider, {
+                        label: t('scrim'),
+                        value: Math.round(settings.scrim * 100),
+                        min: 0,
+                        max: 75,
+                        step: 1,
+                        display: `${Math.round(settings.scrim * 100)}%`,
+                        onChange: (value) => updateSettings({ scrim: value / 100 }),
+                      }),
+                    )
+                  : null,
+                compact
+                  ? h(
+                      'div',
+                      { key: 'chips', className: 'dsh-we-chiprow' },
+                      h(
+                        'label',
+                        { className: 'dsh-we-check' },
+                        h('input', { type: 'checkbox', checked: settings.muted, onChange: (event) => updateSettings({ muted: event.target.checked }) }),
+                        t('mute'),
+                      ),
+                      h(
+                        'label',
+                        { className: 'dsh-we-check' },
+                        h('input', { type: 'checkbox', checked: settings.paused, onChange: (event) => updateSettings({ paused: event.target.checked }) }),
+                        t('pause'),
+                      ),
+                    )
+                  : null,
                 h(
                   'div',
                   { key: 'blur', className: 'dsh-we-grid' },
@@ -3326,19 +3471,6 @@ window.__ModuleLoader__.load({
                     t('resetFraming'),
                   ),
                   h('span', { className: 'dsh-we-hint' }, t('framingZoomFirst')),
-                ),
-                h(
-                  'div',
-                  { key: 'reset', className: 'dsh-we-chiprow' },
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'dsh-we-btn',
-                      onClick: () => updateSettings({ ...LOOK_DEFAULTS }),
-                    },
-                    t('reset'),
-                  ),
                 ),
                 h(
                   'div',
