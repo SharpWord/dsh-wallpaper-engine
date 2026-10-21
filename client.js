@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b55'
+    const BUILD = 'b56'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -113,14 +113,20 @@ window.__ModuleLoader__.load({
         scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
-        fitCover: 'Cover',
-        fitContain: 'Contain',
+        fitCover: 'Fill',
+        fitContain: 'Fit',
+        fitStretch: 'Stretch',
+        fitCenter: 'Centre',
         preview: 'Live preview',
-        previewHint: 'A mock desktop drawn with the current settings — drag a slider and watch it change.',
+        previewHint: 'The real wallpaper, drawn with the same fills, frost and dimming the window gets — drag a slider and watch it.',
         advanced: 'Advanced',
         advancedHint: 'Blur, drift, saturation and per-block frosting.',
         reset: 'Reset to defaults',
-        fitAutoHint: 'Auto keeps the picture whole when it is far from your screen shape, and fills the edges with its own blurred copy.',
+        fitAutoHint: 'Same shapes as Wallpaper Engine: Fill crops to fill, Fit shows the whole picture, Stretch ignores the aspect, Centre keeps 1:1 pixels. Auto picks Fill unless the picture is far from your screen shape.',
+        fitCoverHint: 'Fill the window, cropping the overflow (Wallpaper Engine: Fill).',
+        fitContainHint: 'Show the whole picture, edges filled with a blurred copy of it (Wallpaper Engine: Fit).',
+        fitStretchHint: 'Fill the window without keeping the aspect — the picture stretches.',
+        fitCenterHint: 'Draw at the original pixel size in the middle, blurred copy behind.',
         mute: 'Mute video',
         pause: 'Pause video',
         library: 'Library',
@@ -187,14 +193,20 @@ window.__ModuleLoader__.load({
         scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
-        fitCover: '铺满',
-        fitContain: '完整显示',
+        fitCover: '填充',
+        fitContain: '适合',
+        fitStretch: '拉伸',
+        fitCenter: '居中',
         preview: '实时预览',
-        previewHint: '用当前设置模拟桌面效果，拖动滑杆直接对比。',
+        previewHint: '真壁纸 + 真实的玻璃填充/磨砂/压暗，拖动滑杆直接看差别。',
         advanced: '高级',
         advancedHint: '模糊、漂移、饱和度与分块磨砂。',
         reset: '恢复默认',
-        fitAutoHint: '比例和屏幕差得多时自动完整显示，四周用它自己的模糊副本补满。',
+        fitAutoHint: '和壁纸引擎一样的四种摆法：填充裁满、适合整张、拉伸不管比例、居中原始像素。自适应按屏幕形状在填充/适合之间自动选。',
+        fitCoverHint: '铺满窗口，超出的部分裁掉（壁纸引擎：填充）。',
+        fitContainHint: '完整显示整张图，四周用它自己的模糊副本补满（壁纸引擎：适合）。',
+        fitStretchHint: '不管原始比例，直接拉满窗口。',
+        fitCenterHint: '按原始像素大小居中，背后垫它的模糊副本。',
         mute: '视频静音',
         pause: '暂停视频',
         library: '壁纸库',
@@ -570,7 +582,8 @@ window.__ModuleLoader__.load({
         vignette: Number(settings.vignette),
         vivid: Number(settings.vivid),
         fit: reportFit.mode,
-        contained: reportFit.contained,
+        fitSetting: reportFit.setting,
+        fitBackdrop: reportFit.backdrop,
         mediaAspect: reportFit.aspect === null ? -1 : reportFit.aspect,
         fitFill: (() => {
           try {
@@ -585,7 +598,14 @@ window.__ModuleLoader__.load({
             if (!card) return 'none'
             const image = card.querySelector('.dsh-we-preview-media')
             const side = card.querySelector('.dsh-we-preview-side')
-            return `${image ? image.getAttribute('src') ? 'img' : 'blank' : 'missing'}/${side ? getComputedStyle(side).backgroundColor : 'missing'}`
+            const box = card.querySelector('.dsh-we-preview')
+            const fill = card.querySelector('.dsh-we-preview-fill')
+            return [
+              image ? (image.getAttribute('src') ? 'img' : 'blank') : 'missing',
+              side ? getComputedStyle(side).backgroundColor : 'noside',
+              box ? box.getAttribute('data-fit') : 'nobox',
+              fill ? 'fill' : 'flat',
+            ].join('/')
           } catch {
             return 'error'
           }
@@ -952,6 +972,31 @@ window.__ModuleLoader__.load({
         } catch (error) {
           add('slider.blockBlur', false, (error && error.message) || 'blockBlur() failed')
         }
+        // Fit modes must map onto the four Wallpaper Engine placements, and the
+        // auto mode must actually decide from the picture's shape.
+        try {
+          const wide = 16 / 9
+          const square = 1
+          const cases = [
+            ['cover', wide, 'cover', false],
+            ['contain', wide, 'contain', true],
+            ['stretch', wide, 'fill', false],
+            ['center', square, 'none', true],
+            ['auto', wide, 'cover', false],
+            ['auto', square, 'contain', true],
+          ]
+          const rows = cases.map(([setting, aspect, fit, backdrop]) => {
+            const got = placement(setting, aspect, wide)
+            return got.objectFit === fit && got.backdrop === backdrop
+          })
+          add(
+            'fit.modes',
+            rows.every(Boolean),
+            cases.map((c, i) => `${c[0]}${c[1] === 1 ? '(1:1)' : ''}${rows[i] ? '✓' : '✗'}`).join(' '),
+          )
+        } catch (error) {
+          add('fit.modes', false, (error && error.message) || 'placement() failed')
+        }
 
         // Media streaming with a Range header, from the page origin.
         try {
@@ -1251,6 +1296,22 @@ window.__ModuleLoader__.load({
         `  --dsw-alias-label-quaternary: ${ink.tertiary} !important;`,
         '}',
       ].join('\n')
+    }
+
+    /**
+     * How the wallpaper is placed inside a box, mirroring Wallpaper Engine's
+     * own fit modes: fill / fit / stretch / centre, plus an auto mode that
+     * switches to fit only when the picture is far from the screen's shape.
+     * `backdrop` means "draw a blurred copy of the picture behind it", so the
+     * borders are never a flat void.
+     */
+    function placement(fitSetting, mediaAspect, boxAspect) {
+      const setting = ['auto', 'cover', 'contain', 'stretch', 'center'].includes(fitSetting) ? fitSetting : 'auto'
+      const box = Number(boxAspect) > 0 ? Number(boxAspect) : 16 / 9
+      const gap = Number(mediaAspect) > 0 ? Math.abs(Math.log(Number(mediaAspect) / box)) : 0
+      const mode = setting === 'auto' ? (Number(mediaAspect) > 0 && gap > 0.22 ? 'contain' : 'cover') : setting
+      const objectFit = mode === 'stretch' ? 'fill' : mode === 'center' ? 'none' : mode === 'contain' ? 'contain' : 'cover'
+      return { setting, mode, objectFit, backdrop: mode === 'contain' || mode === 'center' }
     }
 
     /**
@@ -1555,7 +1616,7 @@ window.__ModuleLoader__.load({
     let wallpaperAmbient = { a: '', b: '' }
 
     /** Last fit decision, carried into the renderer report. */
-    let reportFit = { mode: 'auto', contained: false, aspect: null }
+    let reportFit = { mode: 'cover', setting: 'auto', backdrop: false, aspect: null }
 
     /**
      * Measure a loaded image or video frame in a tiny canvas: average luminance
@@ -1740,9 +1801,15 @@ window.__ModuleLoader__.load({
 .dsh-we-now-meta { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 /* Mock desktop: the same fills, frost and veil the real window gets, drawn in a
    small box so a slider can be judged without leaving the settings page. */
-.dsh-we-preview { position: relative; aspect-ratio: 16 / 9; width: 100%; border-radius: 12px; overflow: hidden;
+.dsh-we-preview { position: relative; aspect-ratio: 16 / 9; width: 100%; max-height: 240px; border-radius: 12px; overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); isolation: isolate; }
 .dsh-we-preview-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.dsh-we-preview-fill { position: absolute; inset: -6%; background-size: cover; background-position: center;
+  opacity: .92; transform: scale(1.04); filter: blur(18px) saturate(1.1); }
+.dsh-we-preview-ambient { position: absolute; inset: -12%; mix-blend-mode: soft-light; opacity: .62; pointer-events: none;
+  background: radial-gradient(58% 52% at 24% 20%, var(--dsh-we-ambient-a, transparent), transparent 72%),
+    radial-gradient(54% 48% at 80% 76%, var(--dsh-we-ambient-b, transparent), transparent 74%); }
+body[data-ds-dark-theme] .dsh-we-preview-ambient { mix-blend-mode: screen; opacity: .34; }
 .dsh-we-preview-veil, .dsh-we-preview-vignette { position: absolute; inset: 0; pointer-events: none; }
 .dsh-we-preview-shell { position: absolute; inset: 0; display: grid; grid-template-columns: 21% 1fr;
   grid-template-rows: minmax(0, 1fr) 18%; }
@@ -1908,27 +1975,28 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const blur = clamp(Number(settings.blur), 0, 32, 0)
       const vivid = clamp(Number(settings.vivid), 60, 160, DEFAULTS.vivid) / 100
       const vignette = clamp(Number(settings.vignette), 0, 70, DEFAULTS.vignette) / 100
-      // `auto` keeps the picture whole only when its shape is far from the
-      // screen's, and fills the leftover edges with a blurred copy of itself.
-      const fitSetting = settings.fit === 'contain' ? 'contain' : settings.fit === 'cover' ? 'cover' : 'auto'
+      const fitSetting = settings.fit
       const viewportAspect = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : 16 / 9
-      const aspectGap = mediaAspect ? Math.abs(Math.log(mediaAspect / viewportAspect)) : 0
-      const contained = fitSetting === 'contain' || (fitSetting === 'auto' && mediaAspect !== null && aspectGap > 0.22)
-      const objectFit = contained ? 'contain' : 'cover'
-      const motion = settings.motion !== false && !contained
+      const shell = placement(fitSetting, mediaAspect, viewportAspect)
+      const motion = settings.motion !== false && shell.mode !== 'contain' && shell.mode !== 'center'
       const filters = []
       if (blur > 0) filters.push(`blur(${blur}px)`)
       if (Math.abs(vivid - 1) > 0.01) filters.push(`saturate(${vivid.toFixed(2)})`)
       const mediaStyle = {
-        objectFit,
+        objectFit: shell.objectFit,
         filter: filters.length ? filters.join(' ') : undefined,
         // The drift animation owns `transform`; without it a blur needs its own
         // overscale so the soft edge never shows inside the viewport.
-        transform: !motion && blur > 0 ? 'scale(1.06)' : undefined,
+        transform: !motion && blur > 0 && shell.mode !== 'center' ? 'scale(1.06)' : undefined,
         transition: 'opacity .35s ease',
       }
-      reportFit = { mode: fitSetting, contained, aspect: mediaAspect ? Number(mediaAspect.toFixed(3)) : null }
-      const fillUrl = contained ? (isVideo ? item.preview ? mediaUrl(item.preview) : '' : url) : ''
+      reportFit = {
+        mode: shell.mode,
+        setting: shell.setting,
+        backdrop: shell.backdrop,
+        aspect: mediaAspect ? Number(mediaAspect.toFixed(3)) : null,
+      }
+      const fillUrl = shell.backdrop ? (isVideo ? (item.preview ? mediaUrl(item.preview) : '') : url) : ''
 
       const vignetteStyle = {
         background: [
@@ -1949,7 +2017,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           className: 'dsh-we-backdrop',
           'data-dsh-wallpaper-backdrop': item.id,
           'data-motion': motion ? 'true' : 'false',
-          'data-fit': contained ? 'contain' : 'cover',
+          'data-fit': shell.mode,
           'aria-hidden': 'true',
         },
         fillUrl ? h('img', { className: 'dsh-we-backdrop-fill', src: fillUrl, alt: '', draggable: false, 'aria-hidden': 'true' }) : null,
@@ -2164,6 +2232,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
     /** A mock desktop drawn with the current settings. */
     function Preview({ item }) {
       useStoreVersion()
+      const [previewAspect, setPreviewAspect] = useState(0)
       let dark = false
       try {
         dark = document.body.hasAttribute('data-ds-dark-theme')
@@ -2183,7 +2252,12 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const filters = []
       if (blur > 0) filters.push(`blur(${blur}px)`)
       if (Math.abs(vivid - 1) > 0.01) filters.push(`saturate(${vivid.toFixed(2)})`)
-      const contained = settings.fit === 'contain' || settings.fit === 'auto'
+      // Same decision the real backdrop makes for this window, then drawn
+      // inside a box that has the window's exact shape — that is what makes the
+      // preview honest instead of a decorative mock.
+      const windowAspect = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : 16 / 9
+      const mediaAspectPreview = previewAspect || reportFit.aspect || 0
+      const shell = placement(settings.fit, mediaAspectPreview, windowAspect)
       const url = item ? mediaUrl(item.preview || item.playFile) : ''
       const vignetteStyle = {
         background: [
@@ -2191,12 +2265,27 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           `radial-gradient(128% 108% at 50% 46%, rgba(0, 0, 0, 0) 46%, rgba(0, 0, 0, ${(vignette * 0.8).toFixed(3)}) 100%)`,
         ].join(', '),
       }
+      const ambientStyle = {
+        '--dsh-we-ambient-a': wallpaperAmbient.a || 'transparent',
+        '--dsh-we-ambient-b': wallpaperAmbient.b || 'transparent',
+        opacity: wallpaperAmbient.a || wallpaperAmbient.b ? undefined : 0,
+      }
       return h(
         'div',
         { className: 'dsh-we-field', 'data-dsh-preview': 'true' },
         h(
           'div',
-          { className: 'dsh-we-preview' },
+          {
+            className: 'dsh-we-preview',
+            'data-fit': shell.mode,
+            style: { aspectRatio: windowAspect.toFixed(3) },
+          },
+          shell.backdrop && url
+            ? h('div', {
+                className: 'dsh-we-preview-fill',
+                style: { backgroundImage: `url("${url}")`, filter: filters.length ? filters.join(' ') : undefined },
+              })
+            : null,
           url
             ? h('img', {
                 className: 'dsh-we-preview-media',
@@ -2205,9 +2294,14 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                 draggable: false,
                 loading: 'lazy',
                 decoding: 'async',
-                style: { objectFit: contained ? 'contain' : 'cover', filter: filters.length ? filters.join(' ') : undefined },
+                style: { objectFit: shell.objectFit, filter: filters.length ? filters.join(' ') : undefined },
+                onLoad: (event) => {
+                  const node = event.currentTarget
+                  setPreviewAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : 0)
+                },
               })
             : h('div', { className: 'dsh-we-preview-media', style: { background: 'var(--dsw-alias-bg-layer-2)' } }),
+          wallpaperAmbient.a || wallpaperAmbient.b ? h('div', { className: 'dsh-we-preview-ambient', style: ambientStyle }) : null,
           h('div', { className: 'dsh-we-preview-vignette', style: vignetteStyle }),
           veil > 0.004
             ? h('div', { className: 'dsh-we-preview-veil', style: { background: `rgba(${dark ? '0, 0, 0' : '255, 255, 255'}, ${veil.toFixed(3)})` } })
@@ -2488,21 +2582,20 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
               h(
                 'div',
                 { className: 'dsh-we-seg', style: { alignSelf: 'flex-start' } },
-                h(
-                  'button',
-                  { type: 'button', 'data-active': settings.fit === 'auto' ? 'true' : 'false', onClick: () => updateSettings({ fit: 'auto' }) },
-                  t('fitAuto'),
-                ),
-                h(
-                  'button',
-                  { type: 'button', 'data-active': settings.fit === 'cover' ? 'true' : 'false', onClick: () => updateSettings({ fit: 'cover' }) },
-                  t('fitCover'),
-                ),
-                h(
-                  'button',
-                  { type: 'button', 'data-active': settings.fit === 'contain' ? 'true' : 'false', onClick: () => updateSettings({ fit: 'contain' }) },
-                  t('fitContain'),
-                ),
+                ...['auto', 'cover', 'contain', 'stretch', 'center'].map((mode) => {
+                  const label = mode === 'auto' ? t('fitAuto') : mode === 'cover' ? t('fitCover') : mode === 'contain' ? t('fitContain') : mode === 'stretch' ? t('fitStretch') : t('fitCenter')
+                  const hint = mode === 'auto' ? t('fitAutoHint') : mode === 'cover' ? t('fitCoverHint') : mode === 'contain' ? t('fitContainHint') : mode === 'stretch' ? t('fitStretchHint') : t('fitCenterHint')
+                  return h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: hint,
+                      'data-active': settings.fit === mode ? 'true' : 'false',
+                      onClick: () => updateSettings({ fit: mode }),
+                    },
+                    label,
+                  )
+                }),
               ),
               h('div', { className: 'dsh-we-row-hint' }, t('fitAutoHint')),
             ),
