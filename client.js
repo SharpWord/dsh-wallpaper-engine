@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b60'
+    const BUILD = 'b61'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -125,7 +125,7 @@ window.__ModuleLoader__.load({
         zoom: 'Zoom',
         posX: 'Horizontal',
         posY: 'Vertical',
-        framingHint: 'Drag to move the crop, double-click to reset. Zoom with the corner buttons or the slider.',
+        framingHint: 'Drag to move the crop, Alt+wheel or the corner buttons to zoom, double-click to reset.',
         zoomIn: 'Zoom in',
         zoomOut: 'Zoom out',
         scrim: 'Dim',
@@ -212,7 +212,7 @@ window.__ModuleLoader__.load({
         zoom: '缩放',
         posX: '左右',
         posY: '上下',
-        framingHint: '拖动预览移动取景，双击复位；缩放用右下角按钮或滑杆。',
+        framingHint: '拖动预览移动取景，Alt+滚轮或右下角按钮缩放，双击复位。',
         zoomIn: '放大',
         zoomOut: '缩小',
         scrim: '压暗',
@@ -1244,6 +1244,8 @@ window.__ModuleLoader__.load({
         if (!box) {
           add('preview.drag', true, 'settings closed')
           add('preview.zoomButtons', true, 'settings closed')
+          add('preview.wheelNeutral', true, 'settings closed')
+          add('preview.wheelAlt', true, 'settings closed')
         } else {
           const before = { zoom: settings.zoom, posX: settings.posX, posY: settings.posY }
           const boxRect = box.getBoundingClientRect()
@@ -1259,12 +1261,23 @@ window.__ModuleLoader__.load({
           if (zoomIn) zoomIn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
           await wait(80)
           add('preview.zoomButtons', settings.zoom > before.zoom, `zoom ${before.zoom} → ${settings.zoom}${zoomIn ? '' : ' (button missing)'}`)
+          // The wheel must be inert unless Alt is held: a plain wheel over the
+          // preview has to keep scrolling the page, not resize the wallpaper.
+          const neutralZoom = settings.zoom
+          box.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 }))
+          await wait(360)
+          add('preview.wheelNeutral', settings.zoom === neutralZoom, `zoom ${neutralZoom} → ${settings.zoom} without Alt`)
+          box.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120, altKey: true }))
+          await wait(420)
+          add('preview.wheelAlt', settings.zoom > neutralZoom, `zoom ${neutralZoom} → ${settings.zoom} with Alt`)
           updateSettings({ zoom: before.zoom, posX: before.posX, posY: before.posY })
           await wait(60)
         }
       } catch (error) {
         add('preview.drag', false, (error && error.message) || 'dispatch failed')
         add('preview.zoomButtons', false, (error && error.message) || 'dispatch failed')
+        add('preview.wheelNeutral', false, (error && error.message) || 'dispatch failed')
+        add('preview.wheelAlt', false, (error && error.message) || 'dispatch failed')
       }
       selfTestResult = {
         token,
@@ -2527,7 +2540,12 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       // gesture ends, so a pointermove never writes localStorage.
       const [posXDraft, setPosXDraft] = useState(null)
       const [posYDraft, setPosYDraft] = useState(null)
+      const [zoomDraft, setZoomDraft] = useState(null)
       const dragRef = useRef(null)
+      const zoomCommit = useRef(null)
+      useEffect(() => () => {
+        if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
+      }, [])
       let dark = false
       try {
         dark = document.body.hasAttribute('data-ds-dark-theme')
@@ -2559,7 +2577,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const url = item ? mediaUrl(item.playFile) : ''
       const isVideoPreview = Boolean(item && item.playKind === 'video')
       const frame = framing(
-        settings.zoom,
+        zoomDraft === null ? settings.zoom : zoomDraft,
         posXDraft === null ? settings.posX : posXDraft,
         posYDraft === null ? settings.posY : posYDraft,
       )
@@ -2630,7 +2648,26 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
               setPosXDraft(null)
               setPosYDraft(null)
             },
+            onWheel: (event) => {
+              // Plain wheel belongs to the settings page's own scrolling; only
+              // Alt+wheel is ours, so nobody shrinks the wallpaper by scrolling.
+              if (!event.altKey) return
+              event.preventDefault()
+              const base = zoomDraft === null ? settings.zoom : zoomDraft
+              const next = clamp(Math.round(base - event.deltaY * 0.15), 100, 300, base)
+              if (next === base) return
+              setZoomDraft(next)
+              if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
+              zoomCommit.current = window.setTimeout(() => {
+                zoomCommit.current = null
+                setZoomDraft(null)
+                updateSettings({ zoom: next })
+              }, 240)
+            },
             onDoubleClick: () => {
+              if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
+              zoomCommit.current = null
+              setZoomDraft(null)
               setPosXDraft(null)
               setPosYDraft(null)
               updateSettings({ zoom: DEFAULTS.zoom, posX: DEFAULTS.posX, posY: DEFAULTS.posY })
