@@ -22,6 +22,9 @@ window.__ModuleLoader__.load({
     const reactDom = require('react-dom')
     const h = React.createElement
     const { useState, useEffect, useMemo, useRef } = React
+// Layout effect where available: switching the main column back must happen
+// before the browser paints, otherwise the panel flashes for a frame.
+const useLayoutEffect = React.useLayoutEffect || useEffect
 
     /** Set by apply(); components read client services through it. */
     let hostCtx = null
@@ -30,7 +33,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b83'
+    const BUILD = 'b86'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -118,6 +121,8 @@ window.__ModuleLoader__.load({
         framingZoomFirst: 'Wheel to zoom, then drag to move the picture',
         resetFraming: 'Reset picture',
         sidebarPanel: 'Wallpaper',
+        sidebarOnlyHint: 'This panel lives in the sidebar, so the conversation stays in view.',
+        openSidebarPanel: 'Open in the sidebar',
         back: 'Back',
         recentEmpty: 'Nothing here yet',
                     scrim: 'Dim',
@@ -202,6 +207,8 @@ window.__ModuleLoader__.load({
         framingZoomFirst: '先用滚轮或双指放大，再拖动画面',
         resetFraming: '复位画面',
         sidebarPanel: '壁纸',
+        sidebarOnlyHint: '这个面板显示在左侧栏，会话界面保持可见。',
+        openSidebarPanel: '在侧栏打开',
         back: '返回',
         recentEmpty: '还没有用过壁纸',
                     scrim: '压暗',
@@ -2307,6 +2314,7 @@ window.__ModuleLoader__.load({
 .dsh-we-side-row-meta { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
 .dsh-we-side-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
 .dsh-we-page.dsh-we-compact { gap: 12px; padding: 2px 0 12px; }
+      .dsh-we-placeholder { display: grid; place-items: center; min-height: 240px; }
 .dsh-we-compact .dsh-we-head { gap: 10px; align-items: center; }
 .dsh-we-compact .dsh-we-sub { display: none; }
 .dsh-we-compact .dsh-we-title { font-size: 13px; }
@@ -3047,7 +3055,10 @@ window.__ModuleLoader__.load({
           onClick: (event) => {
             event.stopPropagation()
             event.preventDefault()
-            setSidebarOpen(!sidebarOpen)
+            // Toggle what is actually on screen, not a cached flag: the sidebar
+            // also opens from the row click, so the flag can lag behind the DOM.
+            const shown = Boolean(document.querySelector('[data-dsh-side-panel="true"]'))
+            setSidebarOpen(!shown)
           },
         },
         h(
@@ -3066,7 +3077,7 @@ window.__ModuleLoader__.load({
       useStoreVersion()
       return h(
         'div',
-        { className: 'dsh-we-side' },
+        { className: 'dsh-we-side', 'data-dsh-side-panel': 'true' },
         h(
           'div',
           { className: 'dsh-we-side-head' },
@@ -3097,20 +3108,36 @@ window.__ModuleLoader__.load({
     function WallpaperMainPanel() {
       useLocaleVersion()
       useStoreVersion()
-      useEffect(() => {
+      // Runs before paint: the row click opens the sidebar and hands the main
+      // column back to the conversation in the same frame, so this panel is never
+      // seen (it used to flash, reported as "点一下主区会这样再还原").
+      useLayoutEffect(() => {
         setSidebarOpen(true)
         const layout = layoutService()
-        const timer = window.setTimeout(() => {
-          if (!layout || typeof layout.selectPanel !== 'function') return
+        if (layout && typeof layout.selectPanel === 'function') {
           try {
             layout.selectPanel(null)
           } catch {
-            /* keep the fallback page visible rather than a blank column */
+            /* leave the placeholder below; never blank the column */
           }
-        }, 30)
-        return () => window.clearTimeout(timer)
+        }
       }, [])
-      return h('div', { className: 'dsh-we-page' }, h(WallpaperSettings, {}))
+      // Deliberately cheap: mounting the full surface here loaded the library and
+      // drew the preview just to throw it away one frame later.
+      return h(
+        'div',
+        { className: 'dsh-we-page dsh-we-placeholder' },
+        h(
+          'div',
+          { className: 'dsh-we-card' },
+          h('div', { className: 'dsh-we-row-hint' }, t('sidebarOnlyHint')),
+          h(
+            'button',
+            { type: 'button', className: 'dsh-we-btn', onClick: () => setSidebarOpen(true) },
+            t('openSidebarPanel'),
+          ),
+        ),
+      )
     }
 
     /** The settings page. */
