@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b86'
+    const BUILD = 'b88'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -2173,7 +2173,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
 .dsh-we-title { font-size: 15px; font-weight: 600; letter-spacing: .01em; }
 .dsh-we-sub { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.5; }
 .dsh-we-card { border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; padding: 14px 16px;
-  background: var(--dsw-alias-bg-layer-1); display: flex; flex-direction: column; gap: 12px; }
+  background: transparent; display: flex; flex-direction: column; gap: 12px; }
 .dsh-we-card-quiet { background: var(--dsw-alias-bg-layer-1); }
 .dsh-we-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dsh-we-row-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -2239,7 +2239,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
 .dsh-we-empty { padding: 26px 12px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px;
   border: 1px dashed var(--dsw-alias-border-l1); border-radius: 10px; }
 .dsh-we-now { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); }
+  background: transparent; border: 1px solid var(--dsw-alias-border-l1); }
 .dsh-we-now-thumb { width: 96px; aspect-ratio: 16 / 9; border-radius: 7px; overflow: hidden; flex: none; background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-3)); }
 .dsh-we-now-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .dsh-we-now-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -2260,7 +2260,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
 .dsh-we-preview-zoom button:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dsh-we-preview-zoom span { min-width: 42px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-secondary); }
-.dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; background: var(--dsw-alias-bg-base); }
+.dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; background: transparent; }
 .dsh-we-preview-media { position: absolute; display: block; }
 .dsh-we-preview-shell { position: absolute; inset: 0; }
 .dsh-we-preview-side { position: absolute; left: 0; top: 0; bottom: 0; width: 23%; min-width: 0;
