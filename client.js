@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b59'
+    const BUILD = 'b60'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -125,7 +125,9 @@ window.__ModuleLoader__.load({
         zoom: 'Zoom',
         posX: 'Horizontal',
         posY: 'Vertical',
-        framingHint: 'Drag to move the crop, scroll to zoom, double-click to reset.',
+        framingHint: 'Drag to move the crop, double-click to reset. Zoom with the corner buttons or the slider.',
+        zoomIn: 'Zoom in',
+        zoomOut: 'Zoom out',
         scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
@@ -210,7 +212,9 @@ window.__ModuleLoader__.load({
         zoom: '缩放',
         posX: '左右',
         posY: '上下',
-        framingHint: '拖动预览移动取景，滚轮缩放，双击复位。',
+        framingHint: '拖动预览移动取景，双击复位；缩放用右下角按钮或滑杆。',
+        zoomIn: '放大',
+        zoomOut: '缩小',
         scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
@@ -1232,6 +1236,36 @@ window.__ModuleLoader__.load({
       } catch (error) {
         add('preview.card', false, (error && error.message) || 'preview probe failed')
       }
+      // A binding is only proven by dispatching the real events: dragging must
+      // move the crop, the corner + button must zoom, and neither may throw.
+      // Both rows skip (and pass) while the settings page is closed.
+      try {
+        const box = document.querySelector('[data-dsh-preview="true"] .dsh-we-preview')
+        if (!box) {
+          add('preview.drag', true, 'settings closed')
+          add('preview.zoomButtons', true, 'settings closed')
+        } else {
+          const before = { zoom: settings.zoom, posX: settings.posX, posY: settings.posY }
+          const boxRect = box.getBoundingClientRect()
+          const base = { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', button: 0, isPrimary: true }
+          const centerX = boxRect.left + boxRect.width / 2
+          const centerY = boxRect.top + boxRect.height / 2
+          box.dispatchEvent(new PointerEvent('pointerdown', { ...base, clientX: centerX, clientY: centerY }))
+          box.dispatchEvent(new PointerEvent('pointermove', { ...base, clientX: centerX - boxRect.width * 0.18, clientY: centerY }))
+          box.dispatchEvent(new PointerEvent('pointerup', { ...base, clientX: centerX - boxRect.width * 0.18, clientY: centerY }))
+          await wait(80)
+          add('preview.drag', settings.posX !== before.posX, `posX ${before.posX} → ${settings.posX}`)
+          const zoomIn = box.querySelector('.dsh-we-preview-zoom button:last-of-type')
+          if (zoomIn) zoomIn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+          await wait(80)
+          add('preview.zoomButtons', settings.zoom > before.zoom, `zoom ${before.zoom} → ${settings.zoom}${zoomIn ? '' : ' (button missing)'}`)
+          updateSettings({ zoom: before.zoom, posX: before.posX, posY: before.posY })
+          await wait(60)
+        }
+      } catch (error) {
+        add('preview.drag', false, (error && error.message) || 'dispatch failed')
+        add('preview.zoomButtons', false, (error && error.message) || 'dispatch failed')
+      }
       selfTestResult = {
         token,
         at: new Date().toISOString(),
@@ -2016,10 +2050,19 @@ window.__ModuleLoader__.load({
 .dsh-we-now-meta { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 /* Mock desktop: the same fills, frost and veil the real window gets, drawn in a
    small box so a slider can be judged without leaving the settings page. */
-.dsh-we-preview { position: relative; aspect-ratio: 16 / 9; width: 100%; max-height: 240px; border-radius: 12px; overflow: hidden;
+.dsh-we-preview { position: relative; width: auto; max-width: 100%; height: min(300px, 36vh); margin: 0 auto; border-radius: 12px; overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); isolation: isolate;
   cursor: grab; touch-action: none; user-select: none; }
 .dsh-we-preview:active { cursor: grabbing; }
+/* Zoom controls sit in the corner so the mouse wheel stays free for the page. */
+.dsh-we-preview-zoom { position: absolute; right: 8px; bottom: 8px; z-index: 3; display: flex; align-items: center; gap: 2px;
+  padding: 2px; border-radius: 8px; background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-2));
+  border: .5px solid var(--dsh-we-glass-line, var(--dsw-alias-border-l1)); backdrop-filter: blur(12px) saturate(1.1); }
+.dsh-we-preview-zoom button { width: 24px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
+.dsh-we-preview-zoom button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dsh-we-preview-zoom span { min-width: 42px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary); }
 .dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; transform-origin: 50% 50%; will-change: transform; }
 .dsh-we-preview-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .dsh-we-preview-fill { position: absolute; inset: -6%; background-size: cover; background-position: center;
@@ -2484,12 +2527,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       // gesture ends, so a pointermove never writes localStorage.
       const [posXDraft, setPosXDraft] = useState(null)
       const [posYDraft, setPosYDraft] = useState(null)
-      const [zoomDraft, setZoomDraft] = useState(null)
       const dragRef = useRef(null)
-      const zoomCommit = useRef(null)
-      useEffect(() => () => {
-        if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
-      }, [])
       let dark = false
       try {
         dark = document.body.hasAttribute('data-ds-dark-theme')
@@ -2520,7 +2558,11 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       // two would pick different fit modes (that is what made them differ).
       const url = item ? mediaUrl(item.playFile) : ''
       const isVideoPreview = Boolean(item && item.playKind === 'video')
-      const frame = framing(zoomDraft === null ? settings.zoom : zoomDraft, posXDraft === null ? settings.posX : posXDraft, posYDraft === null ? settings.posY : posYDraft)
+      const frame = framing(
+        settings.zoom,
+        posXDraft === null ? settings.posX : posXDraft,
+        posYDraft === null ? settings.posY : posYDraft,
+      )
       const vignetteStyle = {
         background: [
           `linear-gradient(180deg, rgba(0, 0, 0, ${(vignette * 0.9).toFixed(3)}) 0%, rgba(0, 0, 0, 0) 16%, rgba(0, 0, 0, 0) 72%, rgba(0, 0, 0, ${(vignette * 1.1).toFixed(3)}) 100%)`,
@@ -2553,7 +2595,11 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                 width: event.currentTarget.clientWidth || 1,
                 height: event.currentTarget.clientHeight || 1,
               }
-              event.currentTarget.setPointerCapture(event.pointerId)
+              try {
+                event.currentTarget.setPointerCapture(event.pointerId)
+              } catch {
+                /* synthetic events have no capturable pointer */
+              }
             },
             onPointerMove: (event) => {
               const drag = dragRef.current
@@ -2584,20 +2630,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
               setPosXDraft(null)
               setPosYDraft(null)
             },
-            onWheel: (event) => {
-              event.preventDefault()
-              const base = zoomDraft === null ? settings.zoom : zoomDraft
-              const next = clamp(Math.round(base - event.deltaY * 0.12), 100, 300, base)
-              setZoomDraft(next)
-              if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
-              zoomCommit.current = window.setTimeout(() => {
-                zoomCommit.current = null
-                setZoomDraft(null)
-                updateSettings({ zoom: next })
-              }, 260)
-            },
             onDoubleClick: () => {
-              setZoomDraft(null)
               setPosXDraft(null)
               setPosYDraft(null)
               updateSettings({ zoom: DEFAULTS.zoom, posX: DEFAULTS.posX, posY: DEFAULTS.posY })
@@ -2679,6 +2712,37 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
               'div',
               { className: 'dsh-we-preview-bar', style: { background: fillOf(levels.base), backdropFilter: frostOf(blocks.bottom) } },
               h('div', { className: 'dsh-we-preview-pill', style: { background: fillOf(levels.glass), backdropFilter: frostOf(Math.max(12, Number(settings.blurBottom) || 0)) } }),
+            ),
+          ),
+          // Zoom is buttons + slider on purpose: a wheel handler here would eat
+          // the settings page's own scrolling, which felt unreasonable.
+          h(
+            'div',
+            {
+              className: 'dsh-we-preview-zoom',
+              onPointerDown: (event) => event.stopPropagation(),
+              onDoubleClick: (event) => event.stopPropagation(),
+            },
+            h(
+              'button',
+              {
+                type: 'button',
+                title: t('zoomOut'),
+                'aria-label': t('zoomOut'),
+                onClick: () => updateSettings({ zoom: clamp(Math.round(settings.zoom / 1.1), 100, 300, settings.zoom) }),
+              },
+              '−',
+            ),
+            h('span', null, `${settings.zoom}%`),
+            h(
+              'button',
+              {
+                type: 'button',
+                title: t('zoomIn'),
+                'aria-label': t('zoomIn'),
+                onClick: () => updateSettings({ zoom: clamp(Math.round(settings.zoom * 1.1), 100, 300, settings.zoom) }),
+              },
+              '+',
             ),
           ),
         ),
