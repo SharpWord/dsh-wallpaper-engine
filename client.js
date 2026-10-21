@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b61'
+    const BUILD = 'b63'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -128,6 +128,7 @@ window.__ModuleLoader__.load({
         framingHint: 'Drag to move the crop, Alt+wheel or the corner buttons to zoom, double-click to reset.',
         zoomIn: 'Zoom in',
         zoomOut: 'Zoom out',
+        framingZoomFirst: 'Zoom in to move the crop',
         scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
@@ -215,6 +216,7 @@ window.__ModuleLoader__.load({
         framingHint: '拖动预览移动取景，Alt+滚轮或右下角按钮缩放，双击复位。',
         zoomIn: '放大',
         zoomOut: '缩小',
+        framingZoomFirst: '先放大再拖动取景',
         scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
@@ -1173,6 +1175,27 @@ window.__ModuleLoader__.load({
           `applied=${reportFit.zoom}/${reportFit.posX}/${reportFit.posY} settings=${settings.zoom}/${settings.posX}/${settings.posY}`,
         )
 
+        // A transformed ancestor makes the glass columns sample a shifted copy
+        // of the wallpaper (the picture appears twice), so the zoom must be
+        // layout-only: assert that nothing wrapping the media has a transform.
+        try {
+          const wrappers = [
+            document.querySelector('.dsh-we-backdrop-viewport'),
+            document.querySelector('.dsh-we-preview-viewport'),
+          ].filter(Boolean)
+          const bad = wrappers.filter((node) => {
+            const transform = getComputedStyle(node).transform
+            return transform && transform !== 'none'
+          })
+          add(
+            'frame.noTransform',
+            bad.length === 0,
+            wrappers.length === 0 ? 'no layer mounted' : `${wrappers.length} wrapper(s), transformed=${bad.length}`,
+          )
+        } catch (error) {
+          add('frame.noTransform', false, (error && error.message) || 'transform probe failed')
+        }
+
         // The library order is "used last first, then used most" — assert it on
         // synthetic records so the rule is checked even on a fresh profile.
         try {
@@ -1559,17 +1582,27 @@ window.__ModuleLoader__.load({
     /**
      * Zoom and framing: the same numbers drive the real layer and the preview,
      * so dragging in the preview is the same as dragging in the window.
-     * `objectPosition` moves the crop inside the picture (0%..100% per axis,
-     * 50% = centred) and the zoom scales the whole media box inside a clipped
-     * viewport, which is how Wallpaper Engine's zoom/position behaves.
+     * The media is made larger than its viewport (`widthPct`/`heightPct`) and
+     * moved with `left`/`top`, which is a pure layout change: no ancestor gets
+     * a transform, so the `backdrop-filter` columns keep sampling the right
+     * region. `posX`/`posY` are −50..50: at ±50 the picture edge meets the
+     * window edge, and at 100% zoom there is nothing to move.
      */
     function framing(zoom, posX, posY) {
       const scale = clamp(Number(zoom), 100, 300, DEFAULTS.zoom) / 100
       const x = clamp(Number(posX), -50, 50, DEFAULTS.posX)
       const y = clamp(Number(posY), -50, 50, DEFAULTS.posY)
+      // Zoom SIZES the media instead of transforming an ancestor. A transformed
+      // ancestor changes the coordinate space every `backdrop-filter` column
+      // samples in, which shows the wallpaper twice (once shifted, unblurred).
+      const grow = scale - 1
       return {
         scale: scale.toFixed(3),
-        objectPosition: `${(50 + x).toFixed(1)}% ${(50 + y).toFixed(1)}%`,
+        widthPct: (scale * 100).toFixed(2),
+        heightPct: (scale * 100).toFixed(2),
+        leftPct: (grow * (x - 50)).toFixed(2),
+        topPct: (grow * (y - 50)).toFixed(2),
+        objectPosition: '50% 50%',
         zoom: Math.round(scale * 100),
         posX: x,
         posY: y,
@@ -2266,6 +2299,14 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const mediaStyle = {
         objectFit: shell.objectFit,
         objectPosition: frame.objectPosition,
+        // Sized + offset by layout, so no ancestor transform can upset the
+        // backdrop-filter sampling of the columns in front of it.
+        width: `${frame.widthPct}%`,
+        height: `${frame.heightPct}%`,
+        left: `${frame.leftPct}%`,
+        top: `${frame.topPct}%`,
+        right: 'auto',
+        bottom: 'auto',
         filter: filters.length ? filters.join(' ') : undefined,
         // The drift animation owns `transform`; without it a blur needs its own
         // overscale so the soft edge never shows inside the viewport.
@@ -2307,7 +2348,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         },
         h(
           'div',
-          { className: 'dsh-we-backdrop-viewport', style: { transform: `scale(${frame.scale})` } },
+          { className: 'dsh-we-backdrop-viewport' },
           fillUrl
             ? h('img', {
                 className: 'dsh-we-backdrop-fill',
@@ -2622,10 +2663,13 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
             onPointerMove: (event) => {
               const drag = dragRef.current
               if (!drag || drag.id !== event.pointerId) return
-              // Dragging the picture right shows what was left of it, so the
-              // crop position moves the other way.
-              setPosXDraft(clamp(drag.posX - ((event.clientX - drag.x) / drag.width) * 100, -50, 50, drag.posX))
-              setPosYDraft(clamp(drag.posY - ((event.clientY - drag.y) / drag.height) * 100, -50, 50, drag.posY))
+              // The picture follows the pointer: dragging right moves the media
+              // right (posX grows), which reveals what was on the left. Only the
+              // slack that zoom created can move, so the divisor is the grow
+              // factor — at 100% there is nothing to drag.
+              const grow = Math.max(0.02, (clamp(Number(settings.zoom), 100, 300, DEFAULTS.zoom) - 100) / 100)
+              setPosXDraft(clamp(drag.posX + ((event.clientX - drag.x) / drag.width) * 100 / grow, -50, 50, drag.posX))
+              setPosYDraft(clamp(drag.posY + ((event.clientY - drag.y) / drag.height) * 100 / grow, -50, 50, drag.posY))
             },
             onPointerUp: (event) => {
               const drag = dragRef.current
@@ -2675,13 +2719,13 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           },
           h(
             'div',
-            { className: 'dsh-we-preview-viewport', style: { transform: `scale(${frame.scale})` } },
+            { className: 'dsh-we-preview-viewport' },
             shell.backdrop && url
               ? h('div', {
                   className: 'dsh-we-preview-fill',
                   style: {
                     backgroundImage: `url("${url}")`,
-                    backgroundPosition: frame.objectPosition,
+                    backgroundPosition: 'center',
                     filter: filters.length ? filters.join(' ') : undefined,
                   },
                 })
@@ -2699,6 +2743,12 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                     style: {
                       objectFit: shell.objectFit,
                       objectPosition: frame.objectPosition,
+                      width: `${frame.widthPct}%`,
+                      height: `${frame.heightPct}%`,
+                      left: `${frame.leftPct}%`,
+                      top: `${frame.topPct}%`,
+                      right: 'auto',
+                      bottom: 'auto',
                       filter: filters.length ? filters.join(' ') : undefined,
                     },
                     onLoadedData: (event) => {
@@ -2716,6 +2766,12 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                     style: {
                       objectFit: shell.objectFit,
                       objectPosition: frame.objectPosition,
+                      width: `${frame.widthPct}%`,
+                      height: `${frame.heightPct}%`,
+                      left: `${frame.leftPct}%`,
+                      top: `${frame.topPct}%`,
+                      right: 'auto',
+                      bottom: 'auto',
                       filter: filters.length ? filters.join(' ') : undefined,
                     },
                     onLoad: (event) => {
@@ -2789,6 +2845,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           h('span', { className: 'dsh-we-preview-tag' }, t('preview')),
           h('span', null, `${t('surface')} ${levels.base} / ${levels.sidebar} / ${levels.glass}%`),
           h('span', null, `${t('scrim')} ${Math.round(veil * 100)}%`),
+          h('span', null, settings.zoom > 100 ? `${t('zoom')} ${settings.zoom}%` : t('framingZoomFirst')),
           item ? h('span', null, item.kind === 'video' ? t('video') : t('scene')) : null,
         ),
       )
