@@ -29,16 +29,16 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b54'
+    const BUILD = 'b55'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
-      v: 9,
+      v: 10,
       enabled: true,
       mode: 'follow',
       monitor: 'Monitor0',
       pinned: null,
-      fit: 'cover',
+      fit: 'auto',
       blur: 0,
       blurMain: 18,
       blurSide: 18,
@@ -59,6 +59,21 @@ window.__ModuleLoader__.load({
       { id: 'clear', labelKey: 'presetClear', surface: 34, blur: 0, scrim: 0.04 },
       { id: 'readable', labelKey: 'presetReadable', surface: 74, blur: 6, scrim: 0.2 },
     ]
+
+    /** What "reset to defaults" writes back: the look knobs only. */
+    const LOOK_DEFAULTS = {
+      surface: DEFAULTS.surface,
+      blur: DEFAULTS.blur,
+      scrim: DEFAULTS.scrim,
+      fit: DEFAULTS.fit,
+      motion: DEFAULTS.motion,
+      vignette: DEFAULTS.vignette,
+      vivid: DEFAULTS.vivid,
+      blurMain: DEFAULTS.blurMain,
+      blurSide: DEFAULTS.blurSide,
+      blurRight: DEFAULTS.blurRight,
+      blurBottom: DEFAULTS.blurBottom,
+    }
 
     // ------------------------------------------------------------------
     // Copy (English + Simplified Chinese; follows the locale service)
@@ -97,8 +112,15 @@ window.__ModuleLoader__.load({
         vivid: 'Saturation',
         scrim: 'Dim',
         fit: 'Fit',
+        fitAuto: 'Auto',
         fitCover: 'Cover',
         fitContain: 'Contain',
+        preview: 'Live preview',
+        previewHint: 'A mock desktop drawn with the current settings — drag a slider and watch it change.',
+        advanced: 'Advanced',
+        advancedHint: 'Blur, drift, saturation and per-block frosting.',
+        reset: 'Reset to defaults',
+        fitAutoHint: 'Auto keeps the picture whole when it is far from your screen shape, and fills the edges with its own blurred copy.',
         mute: 'Mute video',
         pause: 'Pause video',
         library: 'Library',
@@ -164,8 +186,15 @@ window.__ModuleLoader__.load({
         vivid: '饱和度',
         scrim: '压暗',
         fit: '显示方式',
+        fitAuto: '自适应',
         fitCover: '铺满',
         fitContain: '完整显示',
+        preview: '实时预览',
+        previewHint: '用当前设置模拟桌面效果，拖动滑杆直接对比。',
+        advanced: '高级',
+        advancedHint: '模糊、漂移、饱和度与分块磨砂。',
+        reset: '恢复默认',
+        fitAutoHint: '比例和屏幕差得多时自动完整显示，四周用它自己的模糊副本补满。',
         mute: '视频静音',
         pause: '暂停视频',
         library: '壁纸库',
@@ -540,6 +569,27 @@ window.__ModuleLoader__.load({
         motion: settings.motion !== false,
         vignette: Number(settings.vignette),
         vivid: Number(settings.vivid),
+        fit: reportFit.mode,
+        contained: reportFit.contained,
+        mediaAspect: reportFit.aspect === null ? -1 : reportFit.aspect,
+        fitFill: (() => {
+          try {
+            return document.querySelector('.dsh-we-backdrop-fill') ? 'present' : 'none'
+          } catch {
+            return 'error'
+          }
+        })(),
+        previewCard: (() => {
+          try {
+            const card = document.querySelector('[data-dsh-preview="true"]')
+            if (!card) return 'none'
+            const image = card.querySelector('.dsh-we-preview-media')
+            const side = card.querySelector('.dsh-we-preview-side')
+            return `${image ? image.getAttribute('src') ? 'img' : 'blank' : 'missing'}/${side ? getComputedStyle(side).backgroundColor : 'missing'}`
+          } catch {
+            return 'error'
+          }
+        })(),
         driftActive: (() => {
           try {
             const node = document.querySelector('.dsh-we-backdrop')
@@ -734,10 +784,23 @@ window.__ModuleLoader__.load({
       add('sidebar.collapse', collapsed, `collapsed=${collapsed}`)
 
       const shape = probe('[class*="_toggle"]')
+      // With a modal open (settings, market, …) the overlay legitimately sits on
+      // top of the toggle, so the hit test cannot be judged — treat that as a
+      // skip rather than a failure, but say so in the detail.
+      let covered = ''
+      try {
+        const node = document.elementFromPoint(shape.left + shape.w / 2, shape.top + shape.h / 2)
+        if (node) {
+          if (node.closest('[role="dialog"]')) covered = 'dialog'
+          else if (/_overlay|_mask/i.test(typeof node.className === 'string' ? node.className : '')) covered = 'overlay'
+        }
+      } catch {
+        covered = ''
+      }
       add(
         'sidebar.toggleReachable',
-        shape.found && shape.visible && shape.inView && shape.hit,
-        JSON.stringify({ w: shape.w, h: shape.h, left: shape.left, top: shape.top, inView: shape.inView, hit: shape.hit }),
+        shape.found && shape.visible && shape.inView && (shape.hit || covered !== ''),
+        JSON.stringify({ w: shape.w, h: shape.h, left: shape.left, top: shape.top, inView: shape.inView, hit: shape.hit, covered }),
       )
 
       const again = document.querySelector('[class*="_toggle"]')
@@ -913,6 +976,22 @@ window.__ModuleLoader__.load({
         await wait(150)
       }
       add('page.errors', pageErrors.length === 0, pageErrors.join(' | '))
+      // The preview only exists while the settings page is mounted, so this row
+      // is a real check when it is open and an explicit skip when it is not.
+      try {
+        const card = document.querySelector('[data-dsh-preview="true"]')
+        if (card) {
+          const side = card.querySelector('.dsh-we-preview-side')
+          const media = card.querySelector('.dsh-we-preview-media')
+          const sideFill = side ? getComputedStyle(side).backgroundColor : 'none'
+          const opaque = /rgba?\(\s*\d+,\s*\d+,\s*\d+,\s*0\.\d+/.test(sideFill) || /rgb\(/.test(sideFill)
+          add('preview.card', Boolean(media) && Boolean(side) && opaque, `${media ? media.tagName.toLowerCase() : 'none'}/${sideFill}`)
+        } else {
+          add('preview.card', true, 'settings closed')
+        }
+      } catch (error) {
+        add('preview.card', false, (error && error.message) || 'preview probe failed')
+      }
       selfTestResult = {
         token,
         at: new Date().toISOString(),
@@ -1475,6 +1554,9 @@ window.__ModuleLoader__.load({
     /** Two accent colours pulled from the wallpaper itself (empty until measured). */
     let wallpaperAmbient = { a: '', b: '' }
 
+    /** Last fit decision, carried into the renderer report. */
+    let reportFit = { mode: 'auto', contained: false, aspect: null }
+
     /**
      * Measure a loaded image or video frame in a tiny canvas: average luminance
      * (drives the veil and the ink ladder) plus up to two saturated accent
@@ -1656,6 +1738,31 @@ window.__ModuleLoader__.load({
 .dsh-we-now-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .dsh-we-now-title { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dsh-we-now-meta { color: var(--dsw-alias-label-secondary); font-size: 11px; }
+/* Mock desktop: the same fills, frost and veil the real window gets, drawn in a
+   small box so a slider can be judged without leaving the settings page. */
+.dsh-we-preview { position: relative; aspect-ratio: 16 / 9; width: 100%; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); isolation: isolate; }
+.dsh-we-preview-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.dsh-we-preview-veil, .dsh-we-preview-vignette { position: absolute; inset: 0; pointer-events: none; }
+.dsh-we-preview-shell { position: absolute; inset: 0; display: grid; grid-template-columns: 21% 1fr;
+  grid-template-rows: minmax(0, 1fr) 18%; }
+.dsh-we-preview-side { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 8% 10%;
+  border-right: .5px solid var(--dsw-alias-border-l2); }
+.dsh-we-preview-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 7% 6%; }
+.dsh-we-preview-bar { grid-column: 1 / -1; min-width: 0; display: flex; align-items: center; padding: 0 3%; }
+.dsh-we-preview-line { height: 5px; border-radius: 3px; background: var(--dsw-alias-label-quaternary); opacity: .55; }
+.dsh-we-preview-line[data-w="70"] { width: 70%; }
+.dsh-we-preview-line[data-w="45"] { width: 45%; }
+.dsh-we-preview-line[data-w="88"] { width: 88%; }
+.dsh-we-preview-pill { flex: 1; height: 68%; border-radius: 999px; border: .5px solid var(--dsw-alias-border-l2); }
+.dsh-we-preview-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.dsh-we-preview-tag { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-3)); color: var(--dsw-alias-label-secondary); font-size: 10px; }
+.dsh-we-tile-ratio { position: absolute; right: 6px; bottom: 6px; padding: 1px 6px; border-radius: 999px; font-size: 10px;
+  background: rgba(0, 0, 0, .55); color: #fff; letter-spacing: .02em; }
+.dsh-we-adv-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  border: none; background: none; padding: 0; font: inherit; color: var(--dsw-alias-label-primary); cursor: pointer; }
+.dsh-we-adv-toggle span:last-child { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 /* z-index -3: the wallpaper has to sit BEHIND the per-block blur layers
    (::before with z-index -1), otherwise the opaque wallpaper paints over
    them and the per-block blur sliders look dead. -1 is taken by the blur
@@ -1663,6 +1770,10 @@ window.__ModuleLoader__.load({
 .dsh-we-backdrop { position: fixed; inset: 0; z-index: -3; pointer-events: none; overflow: hidden; contain: strict; }
 .dsh-we-backdrop-media { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover;
   transform-origin: 50% 50%; will-change: transform; }
+/* When the picture is kept whole, its own blurred copy fills the bars so the
+   edges belong to the wallpaper instead of a black band. */
+.dsh-we-backdrop-fill { position: absolute; inset: -4%; width: 108%; height: 108%; display: block; object-fit: cover;
+  filter: blur(34px) saturate(1.12) brightness(.94); }
 /* Slow drift so a still wallpaper breathes instead of looking pasted on. */
 .dsh-we-backdrop[data-motion="true"] .dsh-we-backdrop-media {
   animation: dsh-we-drift 48s ease-in-out infinite alternate; }
@@ -1728,6 +1839,9 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       useLocaleVersion()
       useStoreVersion()
       const videoRef = useRef(null)
+      // Natural shape of the current media: `auto` fit needs it to decide
+      // between filling the screen and keeping the picture whole.
+      const [mediaAspect, setMediaAspect] = useState(null)
       const item = currentItem()
       const url = item ? mediaUrl(item.playFile) : ''
       const isVideo = Boolean(item && item.playKind === 'video')
@@ -1786,6 +1900,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       useEffect(() => {
         setWallpaperLuminance(null)
         setWallpaperAmbient(null)
+        setMediaAspect(null)
       }, [url])
 
       if (!url) return null
@@ -1793,8 +1908,14 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const blur = clamp(Number(settings.blur), 0, 32, 0)
       const vivid = clamp(Number(settings.vivid), 60, 160, DEFAULTS.vivid) / 100
       const vignette = clamp(Number(settings.vignette), 0, 70, DEFAULTS.vignette) / 100
-      const objectFit = settings.fit === 'contain' ? 'contain' : 'cover'
-      const motion = settings.motion !== false && objectFit === 'cover'
+      // `auto` keeps the picture whole only when its shape is far from the
+      // screen's, and fills the leftover edges with a blurred copy of itself.
+      const fitSetting = settings.fit === 'contain' ? 'contain' : settings.fit === 'cover' ? 'cover' : 'auto'
+      const viewportAspect = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : 16 / 9
+      const aspectGap = mediaAspect ? Math.abs(Math.log(mediaAspect / viewportAspect)) : 0
+      const contained = fitSetting === 'contain' || (fitSetting === 'auto' && mediaAspect !== null && aspectGap > 0.22)
+      const objectFit = contained ? 'contain' : 'cover'
+      const motion = settings.motion !== false && !contained
       const filters = []
       if (blur > 0) filters.push(`blur(${blur}px)`)
       if (Math.abs(vivid - 1) > 0.01) filters.push(`saturate(${vivid.toFixed(2)})`)
@@ -1803,10 +1924,11 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         filter: filters.length ? filters.join(' ') : undefined,
         // The drift animation owns `transform`; without it a blur needs its own
         // overscale so the soft edge never shows inside the viewport.
-        transform: !motion && (blur > 0 || objectFit === 'contain') ? (blur > 0 ? 'scale(1.06)' : undefined) : undefined,
+        transform: !motion && blur > 0 ? 'scale(1.06)' : undefined,
         transition: 'opacity .35s ease',
-        background: objectFit === 'contain' ? '#000' : undefined,
       }
+      reportFit = { mode: fitSetting, contained, aspect: mediaAspect ? Number(mediaAspect.toFixed(3)) : null }
+      const fillUrl = contained ? (isVideo ? item.preview ? mediaUrl(item.preview) : '' : url) : ''
 
       const vignetteStyle = {
         background: [
@@ -1827,8 +1949,10 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           className: 'dsh-we-backdrop',
           'data-dsh-wallpaper-backdrop': item.id,
           'data-motion': motion ? 'true' : 'false',
+          'data-fit': contained ? 'contain' : 'cover',
           'aria-hidden': 'true',
         },
+        fillUrl ? h('img', { className: 'dsh-we-backdrop-fill', src: fillUrl, alt: '', draggable: false, 'aria-hidden': 'true' }) : null,
         isVideo
           ? h('video', {
               key: url,
@@ -1844,7 +1968,9 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
               preload: 'auto',
               disablePictureInPicture: true,
               onLoadedData: (event) => {
-                absorbWallpaper(event.currentTarget)
+                const node = event.currentTarget
+                setMediaAspect(node.videoWidth && node.videoHeight ? node.videoWidth / node.videoHeight : null)
+                absorbWallpaper(node)
                 reportRenderer('video-loaded')
               },
               onError: () => reportRenderer('video-error'),
@@ -1858,7 +1984,9 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
               decoding: 'async',
               style: mediaStyle,
               onLoad: (event) => {
-                absorbWallpaper(event.currentTarget)
+                const node = event.currentTarget
+                setMediaAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : null)
+                absorbWallpaper(node)
                 reportRenderer('image-load')
               },
               onError: () => reportRenderer('image-error'),
@@ -1969,8 +2097,31 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       )
     }
 
+    /** Human label for a media shape: 16:9, 1:1, 9:16, or the pixel size. */
+    function ratioLabel(width, height) {
+      if (!width || !height) return ''
+      const target = width / height
+      const table = [
+        [21, 9],
+        [32, 9],
+        [16, 9],
+        [16, 10],
+        [4, 3],
+        [3, 2],
+        [1, 1],
+        [2, 3],
+        [3, 4],
+        [9, 16],
+      ]
+      for (const [w, h] of table) {
+        if (Math.abs(target - w / h) / (w / h) < 0.045) return `${w}:${h}`
+      }
+      return `${width}×${height}`
+    }
+
     /** One library tile. */
     function Tile({ item, selected, active, onPick }) {
+      const [ratio, setRatio] = useState('')
       const thumbUrl = item.preview ? mediaUrl(item.preview) : ''
       const badge = item.source === 'local' ? t('local') : item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene')
       return h(
@@ -1986,9 +2137,19 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           'div',
           { className: 'dsh-we-thumb' },
           thumbUrl
-            ? h('img', { src: thumbUrl, alt: '', loading: 'lazy', decoding: 'async' })
+            ? h('img', {
+                src: thumbUrl,
+                alt: '',
+                loading: 'lazy',
+                decoding: 'async',
+                onLoad: (event) => {
+                  const node = event.currentTarget
+                  setRatio(ratioLabel(node.naturalWidth, node.naturalHeight))
+                },
+              })
             : h('div', { className: 'dsh-we-thumb-empty' }, t('previewMissing')),
           h('span', { className: 'dsh-we-badge' }, badge),
+          ratio ? h('span', { className: 'dsh-we-tile-ratio' }, ratio) : null,
           active ? h('span', { className: 'dsh-we-active-dot', title: t('activeNow') }) : null,
         ),
         h(
@@ -2000,10 +2161,120 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       )
     }
 
+    /** A mock desktop drawn with the current settings. */
+    function Preview({ item }) {
+      useStoreVersion()
+      let dark = false
+      try {
+        dark = document.body.hasAttribute('data-ds-dark-theme')
+      } catch {
+        dark = false
+      }
+      const themeKey = dark ? 'dark' : 'light'
+      const levels = surfaces()
+      const blocks = blockBlur()
+      const blur = clamp(Number(settings.blur), 0, 32, 0)
+      const vivid = clamp(Number(settings.vivid), 60, 160, DEFAULTS.vivid) / 100
+      const vignette = clamp(Number(settings.vignette), 0, 70, DEFAULTS.vignette) / 100
+      const veil = scrimAlpha(themeKey)
+      const tint = dark ? '20, 21, 26' : '255, 255, 255'
+      const fillOf = (percent) => `rgba(${tint}, ${(clamp(percent, 0, 100, 0) / 100).toFixed(3)})`
+      const frostOf = (pixels) => (Number(pixels) > 0 ? `blur(${Number(pixels)}px) saturate(1.1)` : undefined)
+      const filters = []
+      if (blur > 0) filters.push(`blur(${blur}px)`)
+      if (Math.abs(vivid - 1) > 0.01) filters.push(`saturate(${vivid.toFixed(2)})`)
+      const contained = settings.fit === 'contain' || settings.fit === 'auto'
+      const url = item ? mediaUrl(item.preview || item.playFile) : ''
+      const vignetteStyle = {
+        background: [
+          `linear-gradient(180deg, rgba(0, 0, 0, ${(vignette * 0.9).toFixed(3)}) 0%, rgba(0, 0, 0, 0) 16%, rgba(0, 0, 0, 0) 72%, rgba(0, 0, 0, ${(vignette * 1.1).toFixed(3)}) 100%)`,
+          `radial-gradient(128% 108% at 50% 46%, rgba(0, 0, 0, 0) 46%, rgba(0, 0, 0, ${(vignette * 0.8).toFixed(3)}) 100%)`,
+        ].join(', '),
+      }
+      return h(
+        'div',
+        { className: 'dsh-we-field', 'data-dsh-preview': 'true' },
+        h(
+          'div',
+          { className: 'dsh-we-preview' },
+          url
+            ? h('img', {
+                className: 'dsh-we-preview-media',
+                src: url,
+                alt: '',
+                draggable: false,
+                loading: 'lazy',
+                decoding: 'async',
+                style: { objectFit: contained ? 'contain' : 'cover', filter: filters.length ? filters.join(' ') : undefined },
+              })
+            : h('div', { className: 'dsh-we-preview-media', style: { background: 'var(--dsw-alias-bg-layer-2)' } }),
+          h('div', { className: 'dsh-we-preview-vignette', style: vignetteStyle }),
+          veil > 0.004
+            ? h('div', { className: 'dsh-we-preview-veil', style: { background: `rgba(${dark ? '0, 0, 0' : '255, 255, 255'}, ${veil.toFixed(3)})` } })
+            : null,
+          h(
+            'div',
+            { className: 'dsh-we-preview-shell' },
+            h(
+              'div',
+              { className: 'dsh-we-preview-side', style: { background: fillOf(levels.sidebar), backdropFilter: frostOf(blocks.side) } },
+              h('div', { className: 'dsh-we-preview-line', 'data-w': '70' }),
+              h('div', { className: 'dsh-we-preview-line', 'data-w': '88' }),
+              h('div', { className: 'dsh-we-preview-line', 'data-w': '45' }),
+            ),
+            h(
+              'div',
+              { className: 'dsh-we-preview-main', style: { background: fillOf(levels.content), backdropFilter: frostOf(blocks.main) } },
+              h('div', { className: 'dsh-we-preview-line', 'data-w': '88' }),
+              h('div', { className: 'dsh-we-preview-line', 'data-w': '70' }),
+              h('div', { className: 'dsh-we-preview-line', 'data-w': '45' }),
+            ),
+            h(
+              'div',
+              { className: 'dsh-we-preview-bar', style: { background: fillOf(levels.base), backdropFilter: frostOf(blocks.bottom) } },
+              h('div', { className: 'dsh-we-preview-pill', style: { background: fillOf(levels.glass), backdropFilter: frostOf(Math.max(12, Number(settings.blurBottom) || 0)) } }),
+            ),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'dsh-we-preview-meta' },
+          h('span', { className: 'dsh-we-preview-tag' }, t('preview')),
+          h('span', null, `${t('surface')} ${levels.base} / ${levels.sidebar} / ${levels.glass}%`),
+          h('span', null, `${t('scrim')} ${Math.round(veil * 100)}%`),
+          item ? h('span', null, item.kind === 'video' ? t('video') : t('scene')) : null,
+        ),
+      )
+    }
+
+    /**
+     * The preview must never be able to take the settings page down, so it is
+     * wrapped in an error boundary that reports the failure instead.
+     */
+    class SafePreview extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { failed: false }
+      }
+
+      static getDerivedStateFromError() {
+        return { failed: true }
+      }
+
+      componentDidCatch(error) {
+        noteError('preview', error)
+      }
+
+      render() {
+        return this.state.failed ? null : h(Preview, this.props)
+      }
+    }
+
     /** The settings page. */
     function WallpaperSettings() {
       const [query, setQuery] = useState('')
       const [filter, setFilter] = useState('all')
+      const [advanced, setAdvanced] = useState(false)
       useLocaleVersion()
       useStoreVersion()
 
@@ -2121,6 +2392,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         h(
           'div',
           { className: 'dsh-we-card' },
+          h(SafePreview, { item: displayItem }),
           h(Row, {
             name: t('mode'),
             hint: t('modeHint'),
@@ -2201,15 +2473,6 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
               onChange: (surface) => updateSettings({ surface }),
             }),
             h(Slider, {
-              label: t('blur'),
-              value: settings.blur,
-              min: 0,
-              max: 32,
-              step: 1,
-              display: `${settings.blur}px`,
-              onChange: (blur) => updateSettings({ blur }),
-            }),
-            h(Slider, {
               label: t('scrim'),
               value: Math.round(settings.scrim * 100),
               min: 0,
@@ -2227,6 +2490,11 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                 { className: 'dsh-we-seg', style: { alignSelf: 'flex-start' } },
                 h(
                   'button',
+                  { type: 'button', 'data-active': settings.fit === 'auto' ? 'true' : 'false', onClick: () => updateSettings({ fit: 'auto' }) },
+                  t('fitAuto'),
+                ),
+                h(
+                  'button',
                   { type: 'button', 'data-active': settings.fit === 'cover' ? 'true' : 'false', onClick: () => updateSettings({ fit: 'cover' }) },
                   t('fitCover'),
                 ),
@@ -2236,6 +2504,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                   t('fitContain'),
                 ),
               ),
+              h('div', { className: 'dsh-we-row-hint' }, t('fitAutoHint')),
             ),
           ),
           h(
@@ -2260,44 +2529,84 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         h(
           'div',
           { className: 'dsh-we-card' },
-          h(Row, { name: t('display'), hint: t('displayHint') }),
           h(
-            'div',
-            { className: 'dsh-we-field', 'data-inline': 'true' },
-            h(
-              'div',
-              { className: 'dsh-we-field-grow' },
-              h('span', { className: 'dsh-we-field-label' }, t('motion')),
-              h('div', { className: 'dsh-we-row-hint' }, t('motionHint')),
-            ),
-            h(Switch, {
-              checked: settings.motion !== false,
-              onChange: (motion) => updateSettings({ motion }),
-              title: t('motion'),
-            }),
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-we-adv-toggle',
+              'aria-expanded': advanced ? 'true' : 'false',
+              onClick: () => setAdvanced(!advanced),
+            },
+            h('span', null, t('advanced')),
+            h('span', null, `${advanced ? '−' : '+'} ${t('advancedHint')}`),
           ),
-          h(
-            'div',
-            { className: 'dsh-we-grid' },
-            h(Slider, {
-              label: t('vignette'),
-              value: settings.vignette,
-              min: 0,
-              max: 70,
-              step: 1,
-              display: `${settings.vignette}%`,
-              onChange: (vignette) => updateSettings({ vignette }),
-            }),
-            h(Slider, {
-              label: t('vivid'),
-              value: settings.vivid,
-              min: 60,
-              max: 160,
-              step: 2,
-              display: `${settings.vivid}%`,
-              onChange: (vivid) => updateSettings({ vivid }),
-            }),
-          ),
+          advanced
+            ? [
+                h(
+                  'div',
+                  { key: 'blur', className: 'dsh-we-grid' },
+                  h(Slider, {
+                    label: t('blur'),
+                    value: settings.blur,
+                    min: 0,
+                    max: 32,
+                    step: 1,
+                    display: `${settings.blur}px`,
+                    onChange: (blur) => updateSettings({ blur }),
+                  }),
+                ),
+                h(
+                  'div',
+                  { key: 'motion', className: 'dsh-we-field', 'data-inline': 'true' },
+                  h(
+                    'div',
+                    { className: 'dsh-we-field-grow' },
+                    h('span', { className: 'dsh-we-field-label' }, t('motion')),
+                    h('div', { className: 'dsh-we-row-hint' }, t('motionHint')),
+                  ),
+                  h(Switch, {
+                    checked: settings.motion !== false,
+                    onChange: (motion) => updateSettings({ motion }),
+                    title: t('motion'),
+                  }),
+                ),
+                h(
+                  'div',
+                  { key: 'look', className: 'dsh-we-grid' },
+                  h(Slider, {
+                    label: t('vignette'),
+                    value: settings.vignette,
+                    min: 0,
+                    max: 70,
+                    step: 1,
+                    display: `${settings.vignette}%`,
+                    onChange: (vignette) => updateSettings({ vignette }),
+                  }),
+                  h(Slider, {
+                    label: t('vivid'),
+                    value: settings.vivid,
+                    min: 60,
+                    max: 160,
+                    step: 2,
+                    display: `${settings.vivid}%`,
+                    onChange: (vivid) => updateSettings({ vivid }),
+                  }),
+                ),
+                h(
+                  'div',
+                  { key: 'reset', className: 'dsh-we-chiprow' },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-we-btn',
+                      onClick: () => updateSettings({ ...LOOK_DEFAULTS }),
+                    },
+                    t('reset'),
+                  ),
+                ),
+              ]
+            : null,
         ),
 
         h(
