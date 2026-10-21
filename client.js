@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b58'
+    const BUILD = 'b59'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -49,9 +49,18 @@ window.__ModuleLoader__.load({
       motion: true,
       vignette: 26,
       vivid: 108,
+      zoom: 100,
+      posX: 0,
+      posY: 0,
       muted: true,
       paused: false,
     }
+
+    /**
+     * The placement modes, in the order Wallpaper Engine lists them. `auto`
+     * keeps the picture whole only when it is far from the screen's shape.
+     */
+    const FIT_MODES = ['auto', 'cover', 'contain', 'stretch', 'center']
 
     /** One-click looks: surface opacity, blur, and dim tuned together. */
     const PRESETS = [
@@ -73,6 +82,9 @@ window.__ModuleLoader__.load({
       blurSide: DEFAULTS.blurSide,
       blurRight: DEFAULTS.blurRight,
       blurBottom: DEFAULTS.blurBottom,
+      zoom: DEFAULTS.zoom,
+      posX: DEFAULTS.posX,
+      posY: DEFAULTS.posY,
     }
 
     // ------------------------------------------------------------------
@@ -110,6 +122,10 @@ window.__ModuleLoader__.load({
         motionHint: 'A still wallpaper pans almost imperceptibly instead of sitting frozen.',
         vignette: 'Edge falloff',
         vivid: 'Saturation',
+        zoom: 'Zoom',
+        posX: 'Horizontal',
+        posY: 'Vertical',
+        framingHint: 'Drag to move the crop, scroll to zoom, double-click to reset.',
         scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
@@ -191,6 +207,10 @@ window.__ModuleLoader__.load({
         motionHint: '静态壁纸会极慢地平移缩放，不显得死板。',
         vignette: '边缘压暗',
         vivid: '饱和度',
+        zoom: '缩放',
+        posX: '左右',
+        posY: '上下',
+        framingHint: '拖动预览移动取景，滚轮缩放，双击复位。',
         scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
@@ -371,7 +391,7 @@ window.__ModuleLoader__.load({
         }
       }
       if (next.mode !== 'follow' && next.mode !== 'pin') next.mode = DEFAULTS.mode
-      if (next.fit !== 'cover' && next.fit !== 'contain') next.fit = DEFAULTS.fit
+      if (FIT_MODES.indexOf(next.fit) < 0) next.fit = DEFAULTS.fit
       next.surface = clamp(Number(next.surface), 20, 100, DEFAULTS.surface)
       next.blur = clamp(Number(next.blur), 0, 32, DEFAULTS.blur)
       next.blurMain = clamp(Number(next.blurMain), 0, 32, DEFAULTS.blurMain)
@@ -381,6 +401,9 @@ window.__ModuleLoader__.load({
       next.scrim = clamp(Number(next.scrim), 0, 0.75, DEFAULTS.scrim)
       next.vignette = clamp(Number(next.vignette), 0, 70, DEFAULTS.vignette)
       next.vivid = clamp(Number(next.vivid), 60, 160, DEFAULTS.vivid)
+      next.zoom = clamp(Number(next.zoom), 100, 300, DEFAULTS.zoom)
+      next.posX = clamp(Number(next.posX), -50, 50, DEFAULTS.posX)
+      next.posY = clamp(Number(next.posY), -50, 50, DEFAULTS.posY)
       next.motion = next.motion !== false
       next.enabled = next.enabled !== false
       next.muted = next.muted !== false
@@ -701,6 +724,9 @@ window.__ModuleLoader__.load({
           .join(' '),
         usageCount: Object.keys(usage).length,
         mediaAspect: reportFit.aspect === null ? -1 : reportFit.aspect,
+        zoom: reportFit.zoom,
+        posX: reportFit.posX,
+        posY: reportFit.posY,
         fitFill: (() => {
           try {
             return document.querySelector('.dsh-we-backdrop-fill') ? 'present' : 'none'
@@ -1118,6 +1144,31 @@ window.__ModuleLoader__.load({
           add('fit.modes', false, (error && error.message) || 'placement() failed')
         }
 
+        // Zoom/position are clamped in one pure function, so the limits can be
+        // asserted without touching the page (a drag can never leave the range).
+        try {
+          const high = framing(9999, 9999, -9999)
+          const low = framing(0, -9999, 9999)
+          add(
+            'frame.clamps',
+            high.zoom === 300 && high.posX === 50 && high.posY === -50 &&
+              low.zoom === 100 && low.posX === -50 && low.posY === 50,
+            `high=${high.zoom}/${high.posX}/${high.posY} low=${low.zoom}/${low.posX}/${low.posY}`,
+          )
+        } catch (error) {
+          add('frame.clamps', false, (error && error.message) || 'framing() failed')
+        }
+
+        // The layer must apply the same numbers the settings store holds, or a
+        // slider would move without the picture moving.
+        add(
+          'frame.applied',
+          reportFit.zoom === Math.round(clamp(Number(settings.zoom), 100, 300, DEFAULTS.zoom)) &&
+            reportFit.posX === clamp(Number(settings.posX), -50, 50, DEFAULTS.posX) &&
+            reportFit.posY === clamp(Number(settings.posY), -50, 50, DEFAULTS.posY),
+          `applied=${reportFit.zoom}/${reportFit.posX}/${reportFit.posY} settings=${settings.zoom}/${settings.posX}/${settings.posY}`,
+        )
+
         // The library order is "used last first, then used most" — assert it on
         // synthetic records so the rule is checked even on a fresh profile.
         try {
@@ -1450,12 +1501,32 @@ window.__ModuleLoader__.load({
      * borders are never a flat void.
      */
     function placement(fitSetting, mediaAspect, boxAspect) {
-      const setting = ['auto', 'cover', 'contain', 'stretch', 'center'].includes(fitSetting) ? fitSetting : 'auto'
+      const setting = FIT_MODES.includes(fitSetting) ? fitSetting : 'auto'
       const box = Number(boxAspect) > 0 ? Number(boxAspect) : 16 / 9
       const gap = Number(mediaAspect) > 0 ? Math.abs(Math.log(Number(mediaAspect) / box)) : 0
       const mode = setting === 'auto' ? (Number(mediaAspect) > 0 && gap > 0.22 ? 'contain' : 'cover') : setting
       const objectFit = mode === 'stretch' ? 'fill' : mode === 'center' ? 'none' : mode === 'contain' ? 'contain' : 'cover'
       return { setting, mode, objectFit, backdrop: mode === 'contain' || mode === 'center' }
+    }
+
+    /**
+     * Zoom and framing: the same numbers drive the real layer and the preview,
+     * so dragging in the preview is the same as dragging in the window.
+     * `objectPosition` moves the crop inside the picture (0%..100% per axis,
+     * 50% = centred) and the zoom scales the whole media box inside a clipped
+     * viewport, which is how Wallpaper Engine's zoom/position behaves.
+     */
+    function framing(zoom, posX, posY) {
+      const scale = clamp(Number(zoom), 100, 300, DEFAULTS.zoom) / 100
+      const x = clamp(Number(posX), -50, 50, DEFAULTS.posX)
+      const y = clamp(Number(posY), -50, 50, DEFAULTS.posY)
+      return {
+        scale: scale.toFixed(3),
+        objectPosition: `${(50 + x).toFixed(1)}% ${(50 + y).toFixed(1)}%`,
+        zoom: Math.round(scale * 100),
+        posX: x,
+        posY: y,
+      }
     }
 
     /**
@@ -1760,7 +1831,7 @@ window.__ModuleLoader__.load({
     let wallpaperAmbient = { a: '', b: '' }
 
     /** Last fit decision, carried into the renderer report. */
-    let reportFit = { mode: 'cover', setting: 'auto', backdrop: false, aspect: null }
+    let reportFit = { mode: 'cover', setting: 'auto', backdrop: false, aspect: null, zoom: DEFAULTS.zoom, posX: DEFAULTS.posX, posY: DEFAULTS.posY }
 
     /**
      * Measure a loaded image or video frame in a tiny canvas: average luminance
@@ -1946,7 +2017,10 @@ window.__ModuleLoader__.load({
 /* Mock desktop: the same fills, frost and veil the real window gets, drawn in a
    small box so a slider can be judged without leaving the settings page. */
 .dsh-we-preview { position: relative; aspect-ratio: 16 / 9; width: 100%; max-height: 240px; border-radius: 12px; overflow: hidden;
-  border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); isolation: isolate; }
+  border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); isolation: isolate;
+  cursor: grab; touch-action: none; user-select: none; }
+.dsh-we-preview:active { cursor: grabbing; }
+.dsh-we-preview-viewport { position: absolute; inset: 0; overflow: hidden; transform-origin: 50% 50%; will-change: transform; }
 .dsh-we-preview-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .dsh-we-preview-fill { position: absolute; inset: -6%; background-size: cover; background-position: center;
   opacity: .92; transform: scale(1.04); filter: blur(18px) saturate(1.1); }
@@ -1975,6 +2049,9 @@ body[data-ds-dark-theme] .dsh-we-preview-ambient { mix-blend-mode: screen; opaci
    them and the per-block blur sliders look dead. -1 is taken by the blur
    layers inside the columns; -2 is left free for future scrim layers. */
 .dsh-we-backdrop { position: fixed; inset: 0; z-index: -3; pointer-events: none; overflow: hidden; contain: strict; }
+/* The zoom lives on this wrapper so the drift animation can keep owning the
+   media's transform; the crop position lives in object-position. */
+.dsh-we-backdrop-viewport { position: absolute; inset: 0; overflow: hidden; transform-origin: 50% 50%; will-change: transform; }
 .dsh-we-backdrop-media { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover;
   transform-origin: 50% 50%; will-change: transform; }
 /* When the picture is kept whole, its own blurred copy fills the bars so the
@@ -2129,8 +2206,10 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const filters = []
       if (blur > 0) filters.push(`blur(${blur}px)`)
       if (Math.abs(vivid - 1) > 0.01) filters.push(`saturate(${vivid.toFixed(2)})`)
+      const frame = framing(settings.zoom, settings.posX, settings.posY)
       const mediaStyle = {
         objectFit: shell.objectFit,
+        objectPosition: frame.objectPosition,
         filter: filters.length ? filters.join(' ') : undefined,
         // The drift animation owns `transform`; without it a blur needs its own
         // overscale so the soft edge never shows inside the viewport.
@@ -2142,6 +2221,9 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         setting: shell.setting,
         backdrop: shell.backdrop,
         aspect: mediaAspect ? Number(mediaAspect.toFixed(3)) : null,
+        zoom: frame.zoom,
+        posX: frame.posX,
+        posY: frame.posY,
       }
       const fillUrl = shell.backdrop ? (isVideo ? (item.preview ? mediaUrl(item.preview) : '') : url) : ''
 
@@ -2167,45 +2249,58 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           'data-fit': shell.mode,
           'aria-hidden': 'true',
         },
-        fillUrl ? h('img', { className: 'dsh-we-backdrop-fill', src: fillUrl, alt: '', draggable: false, 'aria-hidden': 'true' }) : null,
-        isVideo
-          ? h('video', {
-              key: url,
-              ref: videoRef,
-              className: 'dsh-we-backdrop-media',
-              src: url,
-              poster,
-              style: mediaStyle,
-              autoPlay: true,
-              loop: true,
-              playsInline: true,
-              muted: true,
-              preload: 'auto',
-              disablePictureInPicture: true,
-              onLoadedData: (event) => {
-                const node = event.currentTarget
-                setMediaAspect(node.videoWidth && node.videoHeight ? node.videoWidth / node.videoHeight : null)
-                absorbWallpaper(node)
-                reportRenderer('video-loaded')
-              },
-              onError: () => reportRenderer('video-error'),
-            })
-          : h('img', {
-              key: url,
-              className: 'dsh-we-backdrop-media',
-              src: url,
-              alt: '',
-              draggable: false,
-              decoding: 'async',
-              style: mediaStyle,
-              onLoad: (event) => {
-                const node = event.currentTarget
-                setMediaAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : null)
-                absorbWallpaper(node)
-                reportRenderer('image-load')
-              },
-              onError: () => reportRenderer('image-error'),
-            }),
+        h(
+          'div',
+          { className: 'dsh-we-backdrop-viewport', style: { transform: `scale(${frame.scale})` } },
+          fillUrl
+            ? h('img', {
+                className: 'dsh-we-backdrop-fill',
+                src: fillUrl,
+                alt: '',
+                draggable: false,
+                'aria-hidden': 'true',
+                style: { objectPosition: frame.objectPosition },
+              })
+            : null,
+          isVideo
+            ? h('video', {
+                key: url,
+                ref: videoRef,
+                className: 'dsh-we-backdrop-media',
+                src: url,
+                poster,
+                style: mediaStyle,
+                autoPlay: true,
+                loop: true,
+                playsInline: true,
+                muted: true,
+                preload: 'auto',
+                disablePictureInPicture: true,
+                onLoadedData: (event) => {
+                  const node = event.currentTarget
+                  setMediaAspect(node.videoWidth && node.videoHeight ? node.videoWidth / node.videoHeight : null)
+                  absorbWallpaper(node)
+                  reportRenderer('video-loaded')
+                },
+                onError: () => reportRenderer('video-error'),
+              })
+            : h('img', {
+                key: url,
+                className: 'dsh-we-backdrop-media',
+                src: url,
+                alt: '',
+                draggable: false,
+                decoding: 'async',
+                style: mediaStyle,
+                onLoad: (event) => {
+                  const node = event.currentTarget
+                  setMediaAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : null)
+                  absorbWallpaper(node)
+                  reportRenderer('image-load')
+                },
+                onError: () => reportRenderer('image-error'),
+              }),
+        ),
         h('div', { className: 'dsh-we-backdrop-ambient', style: ambientStyle }),
         h('div', { className: 'dsh-we-backdrop-vignette', style: vignetteStyle }),
         h('div', { className: 'dsh-we-backdrop-scrim', style: { background: 'var(--dsh-we-scrim, rgba(0, 0, 0, 0))' } }),
@@ -2385,6 +2480,16 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
     function Preview({ item }) {
       useStoreVersion()
       const [previewAspect, setPreviewAspect] = useState(0)
+      // Live drag/wheel feedback: drafts are drawn but only persisted when the
+      // gesture ends, so a pointermove never writes localStorage.
+      const [posXDraft, setPosXDraft] = useState(null)
+      const [posYDraft, setPosYDraft] = useState(null)
+      const [zoomDraft, setZoomDraft] = useState(null)
+      const dragRef = useRef(null)
+      const zoomCommit = useRef(null)
+      useEffect(() => () => {
+        if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
+      }, [])
       let dark = false
       try {
         dark = document.body.hasAttribute('data-ds-dark-theme')
@@ -2410,7 +2515,12 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const windowAspect = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : 16 / 9
       const mediaAspectPreview = previewAspect || reportFit.aspect || 0
       const shell = placement(settings.fit, mediaAspectPreview, windowAspect)
-      const url = item ? mediaUrl(item.preview || item.playFile) : ''
+      // Same source as the real layer: the preview must never measure a
+      // thumbnail's aspect while the window shows the video's aspect, or the
+      // two would pick different fit modes (that is what made them differ).
+      const url = item ? mediaUrl(item.playFile) : ''
+      const isVideoPreview = Boolean(item && item.playKind === 'video')
+      const frame = framing(zoomDraft === null ? settings.zoom : zoomDraft, posXDraft === null ? settings.posX : posXDraft, posYDraft === null ? settings.posY : posYDraft)
       const vignetteStyle = {
         background: [
           `linear-gradient(180deg, rgba(0, 0, 0, ${(vignette * 0.9).toFixed(3)}) 0%, rgba(0, 0, 0, 0) 16%, rgba(0, 0, 0, 0) 72%, rgba(0, 0, 0, ${(vignette * 1.1).toFixed(3)}) 100%)`,
@@ -2431,28 +2541,120 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
             className: 'dsh-we-preview',
             'data-fit': shell.mode,
             style: { aspectRatio: windowAspect.toFixed(3) },
+            title: t('framingHint'),
+            onPointerDown: (event) => {
+              if (event.button !== 0) return
+              dragRef.current = {
+                id: event.pointerId,
+                x: event.clientX,
+                y: event.clientY,
+                posX: settings.posX,
+                posY: settings.posY,
+                width: event.currentTarget.clientWidth || 1,
+                height: event.currentTarget.clientHeight || 1,
+              }
+              event.currentTarget.setPointerCapture(event.pointerId)
+            },
+            onPointerMove: (event) => {
+              const drag = dragRef.current
+              if (!drag || drag.id !== event.pointerId) return
+              // Dragging the picture right shows what was left of it, so the
+              // crop position moves the other way.
+              setPosXDraft(clamp(drag.posX - ((event.clientX - drag.x) / drag.width) * 100, -50, 50, drag.posX))
+              setPosYDraft(clamp(drag.posY - ((event.clientY - drag.y) / drag.height) * 100, -50, 50, drag.posY))
+            },
+            onPointerUp: (event) => {
+              const drag = dragRef.current
+              if (!drag || drag.id !== event.pointerId) return
+              dragRef.current = null
+              try {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              } catch {
+                /* the pointer may already be released */
+              }
+              const patch = {}
+              if (posXDraft !== null) patch.posX = Math.round(posXDraft)
+              if (posYDraft !== null) patch.posY = Math.round(posYDraft)
+              setPosXDraft(null)
+              setPosYDraft(null)
+              if (Object.keys(patch).length > 0) updateSettings(patch)
+            },
+            onPointerCancel: () => {
+              dragRef.current = null
+              setPosXDraft(null)
+              setPosYDraft(null)
+            },
+            onWheel: (event) => {
+              event.preventDefault()
+              const base = zoomDraft === null ? settings.zoom : zoomDraft
+              const next = clamp(Math.round(base - event.deltaY * 0.12), 100, 300, base)
+              setZoomDraft(next)
+              if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
+              zoomCommit.current = window.setTimeout(() => {
+                zoomCommit.current = null
+                setZoomDraft(null)
+                updateSettings({ zoom: next })
+              }, 260)
+            },
+            onDoubleClick: () => {
+              setZoomDraft(null)
+              setPosXDraft(null)
+              setPosYDraft(null)
+              updateSettings({ zoom: DEFAULTS.zoom, posX: DEFAULTS.posX, posY: DEFAULTS.posY })
+            },
           },
-          shell.backdrop && url
-            ? h('div', {
-                className: 'dsh-we-preview-fill',
-                style: { backgroundImage: `url("${url}")`, filter: filters.length ? filters.join(' ') : undefined },
-              })
-            : null,
-          url
-            ? h('img', {
-                className: 'dsh-we-preview-media',
-                src: url,
-                alt: '',
-                draggable: false,
-                loading: 'lazy',
-                decoding: 'async',
-                style: { objectFit: shell.objectFit, filter: filters.length ? filters.join(' ') : undefined },
-                onLoad: (event) => {
-                  const node = event.currentTarget
-                  setPreviewAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : 0)
-                },
-              })
-            : h('div', { className: 'dsh-we-preview-media', style: { background: 'var(--dsw-alias-bg-layer-2)' } }),
+          h(
+            'div',
+            { className: 'dsh-we-preview-viewport', style: { transform: `scale(${frame.scale})` } },
+            shell.backdrop && url
+              ? h('div', {
+                  className: 'dsh-we-preview-fill',
+                  style: {
+                    backgroundImage: `url("${url}")`,
+                    backgroundPosition: frame.objectPosition,
+                    filter: filters.length ? filters.join(' ') : undefined,
+                  },
+                })
+              : null,
+            url
+              ? isVideoPreview
+                ? h('video', {
+                    className: 'dsh-we-preview-media',
+                    src: url,
+                    muted: true,
+                    loop: true,
+                    autoPlay: true,
+                    playsInline: true,
+                    disablePictureInPicture: true,
+                    style: {
+                      objectFit: shell.objectFit,
+                      objectPosition: frame.objectPosition,
+                      filter: filters.length ? filters.join(' ') : undefined,
+                    },
+                    onLoadedData: (event) => {
+                      const node = event.currentTarget
+                      setPreviewAspect(node.videoWidth && node.videoHeight ? node.videoWidth / node.videoHeight : 0)
+                    },
+                  })
+                : h('img', {
+                    className: 'dsh-we-preview-media',
+                    src: url,
+                    alt: '',
+                    draggable: false,
+                    loading: 'lazy',
+                    decoding: 'async',
+                    style: {
+                      objectFit: shell.objectFit,
+                      objectPosition: frame.objectPosition,
+                      filter: filters.length ? filters.join(' ') : undefined,
+                    },
+                    onLoad: (event) => {
+                      const node = event.currentTarget
+                      setPreviewAspect(node.naturalWidth && node.naturalHeight ? node.naturalWidth / node.naturalHeight : 0)
+                    },
+                  })
+              : h('div', { className: 'dsh-we-preview-media', style: { background: 'var(--dsw-alias-bg-layer-2)' } }),
+          ),
           wallpaperAmbient.a || wallpaperAmbient.b ? h('div', { className: 'dsh-we-preview-ambient', style: ambientStyle }) : null,
           h('div', { className: 'dsh-we-preview-vignette', style: vignetteStyle }),
           veil > 0.004
@@ -2837,6 +3039,37 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                     step: 2,
                     display: `${settings.vivid}%`,
                     onChange: (vivid) => updateSettings({ vivid }),
+                  }),
+                ),
+                h(
+                  'div',
+                  { key: 'frame', className: 'dsh-we-grid' },
+                  h(Slider, {
+                    label: t('zoom'),
+                    value: settings.zoom,
+                    min: 100,
+                    max: 300,
+                    step: 1,
+                    display: `${settings.zoom}%`,
+                    onChange: (zoom) => updateSettings({ zoom }),
+                  }),
+                  h(Slider, {
+                    label: t('posX'),
+                    value: settings.posX,
+                    min: -50,
+                    max: 50,
+                    step: 1,
+                    display: `${settings.posX > 0 ? '+' : ''}${settings.posX}%`,
+                    onChange: (posX) => updateSettings({ posX }),
+                  }),
+                  h(Slider, {
+                    label: t('posY'),
+                    value: settings.posY,
+                    min: -50,
+                    max: 50,
+                    step: 1,
+                    display: `${settings.posY > 0 ? '+' : ''}${settings.posY}%`,
+                    onChange: (posY) => updateSettings({ posY }),
                   }),
                 ),
                 h(

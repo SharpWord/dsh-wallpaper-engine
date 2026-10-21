@@ -67,6 +67,22 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 「高级画面设置」默认折叠：分块模糊、漂移、边缘压暗、饱和度、壁纸本体模糊都在里面，
 再加一个「恢复默认画面」按钮（只重置画面参数，不动开关/壁纸选择）。
 
+### 在预览上直接调大小和取景
+
+预览本身就是操作面板，行为和壁纸引擎一致：
+
+| 操作 | 效果 |
+| --- | --- |
+| 拖动预览 | 移动取景（左右 / 上下），松手才写盘 |
+| 滚轮 | 缩放 100%–300%，停下 260ms 后保存 |
+| 双击 | 缩放与取景一起复位 |
+| 「缩放 / 左右 / 上下」滑杆 | 同一组数值的精确调节 |
+
+真实壁纸层和预览用**同一个** `framing()`：`zoom` 转成外层容器的 `transform: scale()`（裁剪由容器
+`overflow:hidden` 负责，所以放大不会溢出窗口），`posX/posY` 转成 `object-position` 的百分比偏移。
+两处都从同一份设置读，所以滑杆动、预览动、窗口背后的壁纸也一起动。自测里的 `frame.clamps` /
+`frame.applied` 分别断言上下限和「设置值 = 实际生效值」。
+
 ### 壁纸库会记住你用过的
 
 壁纸多了以后找不到：库里的顺序是**最近用过的排第一，然后按用的次数从多到少**，
@@ -238,7 +254,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（31 项）
+### 自测（33 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -251,7 +267,8 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 覆盖：Host 三条接口、壁纸层与媒体是否真的加载（`<video readyState=4>`）、主题半透明与文字反差、
 标题栏方角、徽标隐藏、分块模糊、侧栏「无包含块 / 收起 / 收起后按钮可点 / 再展开」、开关关掉后主题回滚为不透明、
 深色主题的自动配字（纯算术，不再临时切换页面主题）、浓度与分块模糊两个旋钮是否真的改变生成规则、
-壁纸库排序规则（`library.usageOrder`，合成数据）、`Range` 206 流式取字节、页面运行时错误。
+壁纸库排序规则（`library.usageOrder`，合成数据）、五种显示方式（`fit.modes`）、缩放与取景的上下限
+（`frame.clamps`）及「设置值 = 实际生效值」（`frame.applied`）、`Range` 206 流式取字节、页面运行时错误。
 
 **自测不会改你的设置**：滑块两项是对 `surfaces()` / `blockBlur()` 的纯算术断言；
 开关那三项走 `previewSettings()`（只重绘、不写 `localStorage`），结束一律按内存快照还原。
