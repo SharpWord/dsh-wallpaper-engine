@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b56'
+    const BUILD = 'b58'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -136,6 +136,7 @@ window.__ModuleLoader__.load({
         video: 'Video',
         web: 'Web',
         local: 'Local',
+      recent: 'Recent',
         refresh: 'Rescan',
         scanning: 'Scanning…',
         empty: 'No wallpapers match this filter.',
@@ -216,6 +217,7 @@ window.__ModuleLoader__.load({
         video: '视频',
         web: '网页',
         local: '本地',
+      recent: '最近',
         refresh: '重新扫描',
         scanning: '扫描中…',
         empty: '没有符合条件的壁纸。',
@@ -421,6 +423,114 @@ window.__ModuleLoader__.load({
     }
 
     // ------------------------------------------------------------------
+    // Usage memory: which wallpapers were used, how often, and when.
+    // The library is sorted "last used first, then most used", so a big
+    // collection stays findable without searching.
+    //
+    // A *use* is a switch, not a paint: reloading the page while the same
+    // wallpaper is showing must not count again, otherwise the counter would
+    // measure reloads instead of choices.
+    // ------------------------------------------------------------------
+
+    const USAGE_KEY = 'dsh-wallpaper-engine:usage'
+    const USAGE_LAST_KEY = 'dsh-wallpaper-engine:usage-last'
+    const USAGE_SCHEMA = 1
+    const PICK_DEDUPE_MS = 10000
+    const DISPLAY_DEDUPE_MS = 6 * 60 * 60 * 1000
+
+    function readUsage() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(USAGE_KEY) || 'null')
+        if (!parsed || typeof parsed !== 'object' || parsed.schema !== USAGE_SCHEMA) return {}
+        const clean = {}
+        for (const [id, value] of Object.entries(parsed.items || {})) {
+          if (!value || typeof value !== 'object') continue
+          clean[id] = { count: Math.max(0, Math.round(Number(value.count) || 0)), last: Number(value.last) || 0 }
+        }
+        return clean
+      } catch {
+        return {}
+      }
+    }
+
+    let usage = readUsage()
+
+    let usageLast = (() => {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(USAGE_LAST_KEY) || 'null')
+        if (!parsed || typeof parsed !== 'object') return { id: '', at: 0 }
+        return { id: String(parsed.id || ''), at: Number(parsed.at) || 0 }
+      } catch {
+        return { id: '', at: 0 }
+      }
+    })()
+
+    /** Bumped whenever `usage` changes so memos that read it recompute. */
+    let usageVersion = 0
+
+    /** Counts for one wallpaper, or a zeroed record. */
+    function usageOf(id) {
+      return usage[id] || { count: 0, last: 0 }
+    }
+
+    function persistUsage() {
+      try {
+        window.localStorage.setItem(USAGE_KEY, JSON.stringify({ schema: USAGE_SCHEMA, items: usage }))
+        window.localStorage.setItem(USAGE_LAST_KEY, JSON.stringify(usageLast))
+      } catch (error) {
+        noteError('usage-save', error)
+      }
+    }
+
+    /**
+     * Remember that a wallpaper was used. `reason` is `pick` for a click in the
+     * library and `display` for whatever the backdrop actually painted (follow
+     * mode changes the wallpaper without any click).
+     */
+    function recordUse(item, reason) {
+      if (!item || !item.id) return
+      const now = Date.now()
+      const dedupe = reason === 'pick' ? PICK_DEDUPE_MS : DISPLAY_DEDUPE_MS
+      if (usageLast.id === item.id && now - usageLast.at < dedupe) {
+        usageLast = { id: item.id, at: now }
+        persistUsage()
+        return
+      }
+      const previous = usageOf(item.id)
+      usage[item.id] = { count: previous.count + 1, last: now }
+      usageLast = { id: item.id, at: now }
+      persistUsage()
+      usageVersion += 1
+      emit()
+    }
+
+    /**
+     * Sort a library list the way it is asked for: the wallpaper used last comes
+     * first, then the ones used most often; untouched ones follow in their
+     * natural (title) order.
+     */
+    function sortByUsage(items) {
+      let lastId = ''
+      let lastAt = 0
+      for (const item of items) {
+        const entry = usageOf(item.id)
+        if (entry.last > lastAt) {
+          lastAt = entry.last
+          lastId = item.id
+        }
+      }
+      return items.slice().sort((left, right) => {
+        if (left.id === lastId) return -1
+        if (right.id === lastId) return 1
+        const a = usageOf(left.id)
+        const b = usageOf(right.id)
+        if (b.count !== a.count) return b.count - a.count
+        if (b.last !== a.last) return b.last - a.last
+        return String(left.title || '').localeCompare(String(right.title || ''))
+      })
+    }
+
+    // ------------------------------------------------------------------
     // Host API
     // ------------------------------------------------------------------
 
@@ -584,6 +694,12 @@ window.__ModuleLoader__.load({
         fit: reportFit.mode,
         fitSetting: reportFit.setting,
         fitBackdrop: reportFit.backdrop,
+        usageTop: Object.entries(usage)
+          .sort((a, b) => b[1].last - a[1].last || b[1].count - a[1].count)
+          .slice(0, 3)
+          .map(([id, entry]) => `${id}:${entry.count}`)
+          .join(' '),
+        usageCount: Object.keys(usage).length,
         mediaAspect: reportFit.aspect === null ? -1 : reportFit.aspect,
         fitFill: (() => {
           try {
@@ -808,11 +924,15 @@ window.__ModuleLoader__.load({
       // top of the toggle, so the hit test cannot be judged — treat that as a
       // skip rather than a failure, but say so in the detail.
       let covered = ''
+      let hitInfo = 'none'
       try {
         const node = document.elementFromPoint(shape.left + shape.w / 2, shape.top + shape.h / 2)
         if (node) {
+          const name = typeof node.className === 'string' ? node.className : ''
+          hitInfo = `${node.tagName.toLowerCase()}${name ? '.' + name.split(/\s+/).slice(0, 2).join('.') : ''}`
           if (node.closest('[role="dialog"]')) covered = 'dialog'
-          else if (/_overlay|_mask/i.test(typeof node.className === 'string' ? node.className : '')) covered = 'overlay'
+          else if (/_overlay|_mask/i.test(name)) covered = 'overlay'
+          else if (node === button || button.contains(node) || node.contains(button)) covered = 'self'
         }
       } catch {
         covered = ''
@@ -820,7 +940,7 @@ window.__ModuleLoader__.load({
       add(
         'sidebar.toggleReachable',
         shape.found && shape.visible && shape.inView && (shape.hit || covered !== ''),
-        JSON.stringify({ w: shape.w, h: shape.h, left: shape.left, top: shape.top, inView: shape.inView, hit: shape.hit, covered }),
+        JSON.stringify({ w: shape.w, h: shape.h, left: shape.left, top: shape.top, inView: shape.inView, hit: shape.hit, covered, hitInfo }),
       )
 
       const again = document.querySelector('[class*="_toggle"]')
@@ -996,6 +1116,30 @@ window.__ModuleLoader__.load({
           )
         } catch (error) {
           add('fit.modes', false, (error && error.message) || 'placement() failed')
+        }
+
+        // The library order is "used last first, then used most" — assert it on
+        // synthetic records so the rule is checked even on a fresh profile.
+        try {
+          const probe = [
+            { id: 'a', title: 'A' },
+            { id: 'b', title: 'B' },
+            { id: 'c', title: 'C' },
+            { id: 'd', title: 'D' },
+          ]
+          const saved = usage
+          const savedVersion = usageVersion
+          usage = {
+            a: { count: 1, last: 300 },
+            b: { count: 9, last: 200 },
+            c: { count: 4, last: 100 },
+          }
+          const order = sortByUsage(probe).map((item) => item.id)
+          usage = saved
+          usageVersion = savedVersion
+          add('library.usageOrder', order.join('') === 'abcd', `order=${order.join('')} (want abcd: last used, then most used, then untouched)`)
+        } catch (error) {
+          add('library.usageOrder', false, (error && error.message) || 'sortByUsage() failed')
         }
 
         // Media streaming with a Range header, from the page origin.
@@ -1811,17 +1955,13 @@ window.__ModuleLoader__.load({
     radial-gradient(54% 48% at 80% 76%, var(--dsh-we-ambient-b, transparent), transparent 74%); }
 body[data-ds-dark-theme] .dsh-we-preview-ambient { mix-blend-mode: screen; opacity: .34; }
 .dsh-we-preview-veil, .dsh-we-preview-vignette { position: absolute; inset: 0; pointer-events: none; }
-.dsh-we-preview-shell { position: absolute; inset: 0; display: grid; grid-template-columns: 21% 1fr;
-  grid-template-rows: minmax(0, 1fr) 18%; }
-.dsh-we-preview-side { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 8% 10%;
+.dsh-we-preview-shell { position: absolute; inset: 0; }
+.dsh-we-preview-side { position: absolute; left: 0; top: 0; bottom: 0; width: 23%; min-width: 0;
   border-right: .5px solid var(--dsw-alias-border-l2); }
-.dsh-we-preview-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 7% 6%; }
-.dsh-we-preview-bar { grid-column: 1 / -1; min-width: 0; display: flex; align-items: center; padding: 0 3%; }
-.dsh-we-preview-line { height: 5px; border-radius: 3px; background: var(--dsw-alias-label-quaternary); opacity: .55; }
-.dsh-we-preview-line[data-w="70"] { width: 70%; }
-.dsh-we-preview-line[data-w="45"] { width: 45%; }
-.dsh-we-preview-line[data-w="88"] { width: 88%; }
-.dsh-we-preview-pill { flex: 1; height: 68%; border-radius: 999px; border: .5px solid var(--dsw-alias-border-l2); }
+.dsh-we-preview-main { position: absolute; left: 23%; right: 0; top: 0; bottom: 13%; min-width: 0; }
+.dsh-we-preview-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 13%; min-width: 0;
+  display: flex; align-items: center; justify-content: center; padding: 0 4%; }
+.dsh-we-preview-pill { width: 100%; height: 62%; border-radius: 999px; border: .5px solid var(--dsw-alias-border-l2); }
 .dsh-we-preview-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .dsh-we-preview-tag { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-3)); color: var(--dsw-alias-label-secondary); font-size: 10px; }
@@ -1969,6 +2109,13 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
         setWallpaperAmbient(null)
         setMediaAspect(null)
       }, [url])
+
+      // Remember what actually appeared on screen: the library sorts "last used
+      // first, then most used", and follow mode changes the wallpaper without
+      // any click, so the backdrop is the only place that sees every change.
+      useEffect(() => {
+        if (item) recordUse(item, 'display')
+      }, [item ? item.id : ''])
 
       if (!url) return null
 
@@ -2188,7 +2335,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
     }
 
     /** One library tile. */
-    function Tile({ item, selected, active, onPick }) {
+    function Tile({ item, selected, active, onPick, used }) {
       const [ratio, setRatio] = useState('')
       const thumbUrl = item.preview ? mediaUrl(item.preview) : ''
       const badge = item.source === 'local' ? t('local') : item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene')
@@ -2224,7 +2371,12 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           'div',
           { className: 'dsh-we-tile-body' },
           h('span', { className: 'dsh-we-tile-title' }, item.title || t('unknown')),
-          h('span', { className: 'dsh-we-tile-meta' }, item.source === 'local' ? t('local') : item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene')),
+          h(
+            'span',
+            { className: 'dsh-we-tile-meta' },
+            item.source === 'local' ? t('local') : item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene'),
+            used && used > 1 ? ` · \u00d7${used}` : '',
+          ),
         ),
       )
     }
@@ -2309,20 +2461,18 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
           h(
             'div',
             { className: 'dsh-we-preview-shell' },
-            h(
-              'div',
-              { className: 'dsh-we-preview-side', style: { background: fillOf(levels.sidebar), backdropFilter: frostOf(blocks.side) } },
-              h('div', { className: 'dsh-we-preview-line', 'data-w': '70' }),
-              h('div', { className: 'dsh-we-preview-line', 'data-w': '88' }),
-              h('div', { className: 'dsh-we-preview-line', 'data-w': '45' }),
-            ),
-            h(
-              'div',
-              { className: 'dsh-we-preview-main', style: { background: fillOf(levels.content), backdropFilter: frostOf(blocks.main) } },
-              h('div', { className: 'dsh-we-preview-line', 'data-w': '88' }),
-              h('div', { className: 'dsh-we-preview-line', 'data-w': '70' }),
-              h('div', { className: 'dsh-we-preview-line', 'data-w': '45' }),
-            ),
+            // The real window is a 23% sidebar, a reading column with its own
+            // wash, and a bottom composer row. The preview draws only those
+            // tints — no drawn-on text or fake chrome — so what it shows is the
+            // wallpaper seen through the same percentages the app uses.
+            h('div', {
+              className: 'dsh-we-preview-side',
+              style: { background: fillOf(levels.sidebar), backdropFilter: frostOf(blocks.side) },
+            }),
+            h('div', {
+              className: 'dsh-we-preview-main',
+              style: { background: fillOf(levels.content), backdropFilter: frostOf(blocks.main) },
+            }),
             h(
               'div',
               { className: 'dsh-we-preview-bar', style: { background: fillOf(levels.base), backdropFilter: frostOf(blocks.bottom) } },
@@ -2388,20 +2538,24 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
       const following = settings.mode === 'follow'
       const displayItem = following ? activeItem : settings.pinned
       const localCount = items.filter((item) => item.source === 'local').length
-      const countFor = (key) => (key === 'local' ? localCount : counts[key] || 0)
+      const recentCount = items.filter((item) => usage[item.id]).length
+      const countFor = (key) => (key === 'local' ? localCount : key === 'recent' ? recentCount : counts[key] || 0)
 
       const visible = useMemo(() => {
         const needle = query.trim().toLowerCase()
-        return items.filter((item) => {
+        const matched = items.filter((item) => {
           if (filter === 'local' && item.source !== 'local') return false
-          if (filter !== 'all' && filter !== 'local' && item.kind !== filter) return false
+          if (filter === 'recent' && !usage[item.id]) return false
+          if (filter !== 'all' && filter !== 'local' && filter !== 'recent' && item.kind !== filter) return false
           if (needle === '') return true
           const haystack = `${item.title || ''} ${(item.tags || []).join(' ')} ${item.workshopId || ''}`.toLowerCase()
           return haystack.includes(needle)
         })
-      }, [items, filter, query])
+        return sortByUsage(matched)
+      }, [items, filter, query, usageVersion])
 
       const pick = (item) => {
+        recordUse(item, 'pick')
         updateSettings({ enabled: true, mode: 'pin', pinned: item })
       }
 
@@ -2781,7 +2935,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                 onChange: (event) => setQuery(event.target.value),
               }),
             ),
-            ...['all', 'scene', 'video', 'web', 'local'].map((key) =>
+            ...['all', 'recent', 'scene', 'video', 'web', 'local'].map((key) =>
               h(
                 'button',
                 {
@@ -2808,6 +2962,7 @@ body[data-ds-dark-theme] .dsh-we-backdrop-ambient { mix-blend-mode: screen; opac
                       item,
                       selected: item.id === selectedId,
                       active: Boolean(activeItem && activeItem.id === item.id),
+                      used: usageOf(item.id).count,
                       onPick: pick,
                     }),
                   ),
