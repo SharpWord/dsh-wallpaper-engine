@@ -7,9 +7,10 @@
  *    sidebar and card surfaces are made translucent through the host theme
  *    tokens (`--dsw-alias-bg-base`, `--dsw-specific-sidebar-fill`), so the
  *    wallpaper shows through the whole window.
- *  - `settings.section` owns the picker: follow the wallpaper Wallpaper Engine
- *    has active, or pin one from the installed Workshop library, plus opacity,
- *    blur, scrim, fit and video controls.
+ *  - `sidebar.panellist` + `sidebar.workspaces` own the picker: the sidebar
+ *    row swaps the session list for the wallpaper surface (follow the active
+ *    Wallpaper Engine wallpaper, or pin one from the Workshop library), while
+ *    the conversation column stays put.
  *
  * No DOM outside the slot subtree is written: the only global artifacts are one
  * scoped <style> pair in <head> and the portaled backdrop element React owns.
@@ -29,7 +30,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b74'
+    const BUILD = 'b76'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -1263,8 +1264,14 @@ window.__ModuleLoader__.load({
         await wait(150)
       }
       add('page.errors', pageErrors.length === 0, pageErrors.join(' | '))
-      // The preview only exists while the settings page is mounted, so this row
-      // is a real check when it is open and an explicit skip when it is not.
+      // The preview lives in the sidebar panel, so open it when the self test
+      // runs from a closed sidebar and close it again afterwards.
+      let openedPreviewPanel = false
+      if (!document.querySelector('[data-dsh-preview="true"]')) {
+        setSidebarOpen(true)
+        openedPreviewPanel = true
+        await wait(500)
+      }
       try {
         const card = document.querySelector('[data-dsh-preview="true"]')
         if (card) {
@@ -1352,6 +1359,10 @@ window.__ModuleLoader__.load({
         add('preview.zoomButtons', false, (error && error.message) || 'dispatch failed')
         add('preview.wheel', false, (error && error.message) || 'dispatch failed')
         add('preview.wheelLimit', false, (error && error.message) || 'dispatch failed')
+      }
+      if (openedPreviewPanel) {
+        setSidebarOpen(false)
+        await wait(320)
       }
       // The sidebar panel is proven the same way: the glyph opens it, the region
       // shows the wallpaper list instead of the session list, the back button
@@ -2702,9 +2713,17 @@ window.__ModuleLoader__.load({
               } catch {
                 /* the pointer may already be released */
               }
+              // Commit from the pointer delta, not from the draft state: two
+              // events landing in one React batch would read a stale draft and
+              // the crop would snap back.
+              const grow = Math.max(0.02, (clamp(Number(settings.zoom), 100, 300, DEFAULTS.zoom) - 100) / 100)
               const patch = {}
-              if (posXDraft !== null) patch.posX = Math.round(posXDraft)
-              if (posYDraft !== null) patch.posY = Math.round(posYDraft)
+              if (event.clientX !== drag.x) {
+                patch.posX = Math.round(clamp(drag.posX + ((event.clientX - drag.x) / drag.width) * 100 / grow, -50, 50, drag.posX))
+              }
+              if (event.clientY !== drag.y) {
+                patch.posY = Math.round(clamp(drag.posY + ((event.clientY - drag.y) / drag.height) * 100 / grow, -50, 50, drag.posY))
+              }
               setPosXDraft(null)
               setPosYDraft(null)
               if (Object.keys(patch).length > 0) updateSettings(patch)
@@ -3394,10 +3413,6 @@ window.__ModuleLoader__.load({
     // Registration
     // ------------------------------------------------------------------
 
-    /** Settings nav label: the owner re-reads this thunk per locale. */
-    function sectionLabel() {
-      return t('sectionTitle')
-    }
 
     /** Register one slot occupant without letting a rejection kill the boot. */
     function registerSlot(register, label) {
@@ -3470,12 +3485,6 @@ window.__ModuleLoader__.load({
       )
       slots.inject('main', () =>
         registerSlot(() => slots.register({ name: 'main', key: 'wallpaper-engine' }, WallpaperMainPanel), 'main'),
-      )
-      slots.inject('settings.section', () =>
-        registerSlot(
-          () => slots.register({ name: 'settings.section', id: 'wallpaper-engine', order: 50, label: sectionLabel }, WallpaperSettings),
-          'settings.section',
-        ),
       )
       // Boot report: proves the Client half runs and shows what it painted.
       window.setTimeout(() => {

@@ -39,13 +39,13 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 | 位置 | 作用 |
 | --- | --- |
 | `shell.overlay` | 壁纸层。通过 `createPortal` 挂到 `document.body`，`z-index:-1`，在应用框架之下、画布之上。 |
-| `settings.section` | 「壁纸」设置页：开关、模式、显示器、库、滤镜、透明度。 |
+| — | 没有单独的设置页：入口只有侧栏那一行，避免同一套界面出现两处 |
 | `sidebar.panellist` + `main` | 侧栏里的壁纸入口：点一下把**侧栏列表区**换成壁纸列表，中间对话区不动；面板里点「返回」恢复会话列表。 |
 
 ### 侧栏面板
 
-侧栏那一行图标不是装饰：点它，左侧列表区换成**完整的壁纸面**（和设置页是同一个组件，
-只是收窄成紧凑排版：预览、显示方式、浓度/压暗、库和搜索筛选都在里面），中间对话不动，
+侧栏那一行图标是唯一入口（设置里不再有「壁纸」页）：点它，左侧列表区换成**完整的壁纸面**（
+紧凑排版：预览、显示方式、浓度/压暗、库和搜索筛选都在里面），中间对话不动，
 顶部「返回」把会话列表换回来。
 
 实现上只有两条规则值得记住：
@@ -289,9 +289,9 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 壁纸库排序规则（`library.usageOrder`，合成数据）、五种显示方式（`fit.modes`）、缩放与取景的上下限
 （`frame.clamps`）及「设置值 = 实际生效值」（`frame.applied`）、`Range` 206 流式取字节、页面运行时错误。
 
-设置页开着时还会真派发事件：`preview.drag`（合成 pointerdown/move/up 后断言取景变了）、
+自测会自己打开侧栏面板，然后真派发事件：`preview.drag`（合成 pointerdown/move/up 后断言取景变了）、
 `preview.zoomButtons`（点角落 + 断言放大）、`preview.wheel`（滚轮必须改变缩放）、
-`preview.wheelLimit`（到 300% 后不再拦截页面滚动）。设置页关着时这些行记 `settings closed` 并通过。
+`preview.wheelLimit`（到 300% 后不再拦截页面滚动）。打开失败时这些行记 `settings closed` 并通过。
 
 侧栏面板那一行（`sidebar.panel`）不看状态变量，而是真点图标：断言列表区被换成壁纸列表、
 会话列表消失、点「返回」后会话列表回来、中间对话区始终没被切走（`mainKept`）。
