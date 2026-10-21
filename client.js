@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b68'
+    const BUILD = 'b71'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -111,12 +111,16 @@ window.__ModuleLoader__.load({
         blurRight: 'Right rail',
         blurBottom: 'Bottom bar',
         zoom: 'Zoom',
-        posX: 'Horizontal',
-        posY: 'Vertical',
-        framingHint: 'Drag to move the crop, Alt+wheel or the corner buttons to zoom, double-click to reset.',
+        framingHint: 'Wheel or pinch to zoom, drag to move the picture, double-click to reset.',
         zoomIn: 'Zoom in',
         zoomOut: 'Zoom out',
-        framingZoomFirst: 'Zoom in to move the crop',
+        framingZoomFirst: 'Wheel to zoom, then drag to move the picture',
+        resetFraming: 'Reset picture',
+        sidebarPanel: 'Wallpaper',
+        back: 'Back',
+        recentEmpty: 'Nothing here yet',
+        openSidebarPanel: 'Open in the sidebar',
+        sidebarOnlyHint: 'This panel lives in the sidebar, so the conversation stays in view.',
         scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
@@ -193,12 +197,16 @@ window.__ModuleLoader__.load({
         blurRight: '右栏',
         blurBottom: '底栏',
         zoom: '缩放',
-        posX: '左右',
-        posY: '上下',
-        framingHint: '拖动预览移动取景，Alt+滚轮或右下角按钮缩放，双击复位。',
+        framingHint: '滚轮或双指缩放整张图，拖动画面移动位置，双击复位。',
         zoomIn: '放大',
         zoomOut: '缩小',
-        framingZoomFirst: '先放大再拖动取景',
+        framingZoomFirst: '先用滚轮或双指放大，再拖动画面',
+        resetFraming: '复位画面',
+        sidebarPanel: '壁纸',
+        back: '返回',
+        recentEmpty: '还没有用过壁纸',
+        openSidebarPanel: '在侧栏打开',
+        sidebarOnlyHint: '这个面板显示在左侧栏，会话界面保持可见。',
         scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
@@ -353,7 +361,52 @@ window.__ModuleLoader__.load({
     /** Re-render on every store change. */
     function useStoreVersion() {
       const [, setVersion] = useState(0)
-      useEffect(() => subscribe(() => setVersion((n) => n + 1)), [])
+      useEffect(() => subscribe(() => setVersion(n => n + 1)), [])
+    }
+
+    // ---------------------------------------------------------------- sidebar
+    // The wallpaper panel lives in the sidebar column: while it is open it takes
+    // over the list region (the shipped browser registers at priority 0, so this
+    // one outranks it), and closing it disposes the registration so the session
+    // list comes straight back — nothing of the shipped sidebar is rewritten.
+    const SIDEBAR_PANEL_ID = 'wallpaper-engine-sidebar'
+    let sidebarSlotHost = null
+    let sidebarOpen = false
+    let sidebarRegistration = null
+    let lastSlotError = ''
+
+    /** Register or drop the sidebar occupant to match `sidebarOpen`. */
+    function syncSidebarSlot() {
+      if (!sidebarSlotHost) return
+      if (sidebarOpen && !sidebarRegistration) {
+        sidebarRegistration = registerSlot(
+          () =>
+            sidebarSlotHost.register(
+              { name: 'sidebar.workspaces', id: SIDEBAR_PANEL_ID, order: 0, priority: -10 },
+              SidebarWallpaperPanel,
+            ),
+          'sidebar.workspaces',
+        )
+        return
+      }
+      if (!sidebarOpen && sidebarRegistration) {
+        const drop = sidebarRegistration
+        sidebarRegistration = null
+        try {
+          drop()
+        } catch {
+          /* the entry may already be gone with the plugin fiber */
+        }
+      }
+    }
+
+    /** Open/close the sidebar panel and keep the slot registration in step. */
+    function setSidebarOpen(next) {
+      const wanted = Boolean(next)
+      if (wanted === sidebarOpen) return
+      sidebarOpen = wanted
+      syncSidebarSlot()
+      emit()
     }
 
     /** Read persisted settings, staying on defaults for bad values. */
@@ -699,6 +752,8 @@ window.__ModuleLoader__.load({
         fit: reportFit.mode,
         fitSetting: reportFit.setting,
         fitBackdrop: reportFit.backdrop,
+        slotError: lastSlotError,
+        selftestStep: selfTestStep,
         usageTop: Object.entries(usage)
           .sort((a, b) => b[1].last - a[1].last || b[1].count - a[1].count)
           .slice(0, 3)
@@ -811,6 +866,7 @@ window.__ModuleLoader__.load({
     let selfTestStartedAt = 0
     let selfTestProgress = []
     let selfTestResult = null
+    let selfTestStep = ''
     let pingTimer = null
 
     /** Resolve after `ms`, so a UI transition has time to settle. */
@@ -965,7 +1021,11 @@ window.__ModuleLoader__.load({
     async function runSelfTest(token) {
       const results = []
       selfTestProgress = results
-      const add = (name, ok, detail) => results.push({ name, ok: Boolean(ok), detail: String(detail ?? '').slice(0, 160) })
+      const add = (name, ok, detail) => {
+        selfTestStep = name
+        results.push({ name, ok: Boolean(ok), detail: String(detail ?? '').slice(0, 160) })
+        reportRenderer('progress')
+      }
       const snapshot = { ...settings }
       try {
         // Host half reachable and aware of Wallpaper Engine.
@@ -1252,8 +1312,8 @@ window.__ModuleLoader__.load({
         if (!box) {
           add('preview.drag', true, 'settings closed')
           add('preview.zoomButtons', true, 'settings closed')
-          add('preview.wheelNeutral', true, 'settings closed')
-          add('preview.wheelAlt', true, 'settings closed')
+          add('preview.wheel', true, 'settings closed')
+          add('preview.wheelLimit', true, 'settings closed')
         } else {
           const original = { zoom: settings.zoom, posX: settings.posX, posY: settings.posY }
           // Panning needs overflow: at 100% the media exactly fills the box and
@@ -1274,23 +1334,60 @@ window.__ModuleLoader__.load({
           if (zoomIn) zoomIn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
           await wait(80)
           add('preview.zoomButtons', settings.zoom > before.zoom, `zoom ${before.zoom} → ${settings.zoom}${zoomIn ? '' : ' (button missing)'}`)
-          // The wheel must be inert unless Alt is held: a plain wheel over the
-          // preview has to keep scrolling the page, not resize the wallpaper.
-          const neutralZoom = settings.zoom
+          // The wheel over the picture zooms it (a trackpad pinch arrives as
+          // ctrl+wheel and is steered by the same handler).
+          const wheelBase = settings.zoom
           box.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 }))
           await wait(360)
-          add('preview.wheelNeutral', settings.zoom === neutralZoom, `zoom ${neutralZoom} → ${settings.zoom} without Alt`)
-          box.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120, altKey: true }))
-          await wait(420)
-          add('preview.wheelAlt', settings.zoom > neutralZoom, `zoom ${neutralZoom} → ${settings.zoom} with Alt`)
+          add('preview.wheel', settings.zoom > wheelBase, `zoom ${wheelBase} → ${settings.zoom}`)
+          // At the upper limit the wheel must NOT be swallowed, or the settings
+          // page could not be scrolled with the pointer over the preview.
+          updateSettings({ zoom: 300 })
+          await wait(120)
+          const limitEvent = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 })
+          box.dispatchEvent(limitEvent)
+          await wait(300)
+          add('preview.wheelLimit', settings.zoom === 300 && !limitEvent.defaultPrevented, `zoom=${settings.zoom} prevented=${limitEvent.defaultPrevented}`)
           updateSettings({ zoom: original.zoom, posX: original.posX, posY: original.posY })
           await wait(60)
         }
       } catch (error) {
         add('preview.drag', false, (error && error.message) || 'dispatch failed')
         add('preview.zoomButtons', false, (error && error.message) || 'dispatch failed')
-        add('preview.wheelNeutral', false, (error && error.message) || 'dispatch failed')
-        add('preview.wheelAlt', false, (error && error.message) || 'dispatch failed')
+        add('preview.wheel', false, (error && error.message) || 'dispatch failed')
+        add('preview.wheelLimit', false, (error && error.message) || 'dispatch failed')
+      }
+      // The sidebar panel is proven the same way: the glyph opens it, the region
+      // shows the wallpaper list instead of the session list, the back button
+      // closes it, and the shipped list is back afterwards.
+      try {
+        const glyph = document.querySelector('.dsh-we-glyph')
+        const composerBefore = Boolean(document.querySelector('[data-composer-card], [data-composer-seat]'))
+        if (!glyph) {
+          add('sidebar.panel', false, 'glyph missing')
+        } else {
+          glyph.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+          await wait(260)
+          const opened = Boolean(document.querySelector('.dsh-we-side'))
+          const rows = document.querySelectorAll('.dsh-we-side-row').length
+          const sessionsHidden = !document.querySelector('[class*="_treeBody"] [class*="_sessionRow"]')
+          const back = document.querySelector('.dsh-we-side-back')
+          if (back) back.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+          await wait(260)
+          const closed = !document.querySelector('.dsh-we-side')
+          const sessionsBack = Boolean(document.querySelector('[class*="_treeBody"]'))
+          const composerAfter = Boolean(document.querySelector('[data-composer-card], [data-composer-seat]'))
+          const mainKept = composerBefore === composerAfter
+          add(
+            'sidebar.panel',
+            opened && rows > 0 && sessionsHidden && closed && sessionsBack && mainKept,
+            `open=${opened} rows=${rows} listHidden=${sessionsHidden} close=${closed} listBack=${sessionsBack} mainKept=${mainKept}`,
+          )
+          if (!closed) setSidebarOpen(false)
+        }
+      } catch (error) {
+        setSidebarOpen(false)
+        add('sidebar.panel', false, (error && error.message) || 'dispatch failed')
       }
       selfTestResult = {
         token,
@@ -2051,7 +2148,7 @@ window.__ModuleLoader__.load({
   border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); isolation: isolate;
   cursor: grab; touch-action: none; user-select: none; }
 .dsh-we-preview:active { cursor: grabbing; }
-/* Zoom controls sit in the corner so the mouse wheel stays free for the page. */
+/* Zoom controls sit in the corner; the wheel over the picture also zooms. */
 .dsh-we-preview-zoom { position: absolute; right: 8px; bottom: 8px; z-index: 3; display: flex; align-items: center; gap: 2px;
   padding: 2px; border-radius: 8px; background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-2));
   border: .5px solid var(--dsh-we-glass-line, var(--dsw-alias-border-l1)); backdrop-filter: blur(12px) saturate(1.1); }
@@ -2077,6 +2174,41 @@ window.__ModuleLoader__.load({
 .dsh-we-adv-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
   border: none; background: none; padding: 0; font: inherit; color: var(--dsw-alias-label-primary); cursor: pointer; }
 .dsh-we-adv-toggle span:last-child { color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.dsh-we-hint { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+/* --- sidebar panel ------------------------------------------------------- */
+.dsh-we-glyph { display: inline-grid; place-items: center; color: inherit; line-height: 0; }
+.dsh-we-glyph[data-open="true"] { color: var(--dsw-alias-brand-primary); }
+.dsh-we-side { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding: 2px 0 4px; }
+.dsh-we-side-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dsh-we-side-back { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; padding: 2px 4px;
+  border-radius: 6px; font: inherit; font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.dsh-we-side-back:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dsh-we-side-title { margin-left: auto; font-size: 12px; color: var(--dsw-alias-label-secondary); }
+.dsh-we-side-now { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 10px;
+  background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-3)); border: .5px solid var(--dsh-we-glass-line, var(--dsw-alias-border-l1)); }
+.dsh-we-side-thumb { width: 42px; height: 28px; flex: none; border-radius: 6px; object-fit: cover;
+  background: var(--dsw-alias-bg-layer-2); }
+.dsh-we-side-now-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dsh-we-side-now-title { font-size: 12px; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-we-side-now-kind { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
+.dsh-we-side-search { width: 100%; box-sizing: border-box; height: 26px; padding: 0 8px; border-radius: 8px; font: inherit; font-size: 12px;
+  color: var(--dsw-alias-label-primary); background: var(--dsh-we-glass, var(--dsw-alias-bg-layer-2));
+  border: .5px solid var(--dsw-alias-border-l1); }
+.dsh-we-side-search::placeholder { color: var(--dsw-alias-label-tertiary); }
+.dsh-we-side-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.dsh-we-side-chip { border: .5px solid var(--dsw-alias-border-l1); background: transparent; border-radius: 999px;
+  padding: 1px 8px; font: inherit; font-size: 11px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.dsh-we-side-chip[data-active="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
+.dsh-we-side-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.dsh-we-side-empty { padding: 16px 4px; text-align: center; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+.dsh-we-side-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px; border: 0; border-radius: 8px;
+  background: transparent; font: inherit; text-align: left; cursor: pointer; color: var(--dsw-alias-label-primary); }
+.dsh-we-side-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dsh-we-side-row[data-active="true"] { background: var(--dsw-alias-bg-layer-3); }
+.dsh-we-side-row-thumb { width: 44px; height: 28px; flex: none; border-radius: 6px; object-fit: cover; background: var(--dsw-alias-bg-layer-2); }
+.dsh-we-side-row-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dsh-we-side-row-title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-we-side-row-meta { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
 /* z-index -3: the wallpaper has to sit BEHIND the per-block blur layers
    (::before with z-index -1), otherwise the opaque wallpaper paints over
    them and the per-block blur sliders look dead. -1 is taken by the blur
@@ -2572,13 +2704,15 @@ window.__ModuleLoader__.load({
               setPosYDraft(null)
             },
             onWheel: (event) => {
-              // Plain wheel belongs to the settings page's own scrolling; only
-              // Alt+wheel is ours, so nobody shrinks the wallpaper by scrolling.
-              if (!event.altKey) return
-              event.preventDefault()
+              // Wheel and pinch (a trackpad pinch arrives as ctrl+wheel) zoom the
+              // picture, which is what people expect over a photo. At the limits
+              // the event is passed through so the settings page still scrolls —
+              // scrolling no longer shrinks the wallpaper by accident.
               const base = zoomDraft === null ? settings.zoom : zoomDraft
-              const next = clamp(Math.round(base - event.deltaY * 0.15), 100, 300, base)
+              const step = event.ctrlKey ? 6 : 12
+              const next = clamp(Math.round(base - event.deltaY * 0.05 * step), 100, 300, base)
               if (next === base) return
+              event.preventDefault()
               setZoomDraft(next)
               if (zoomCommit.current) window.clearTimeout(zoomCommit.current)
               zoomCommit.current = window.setTimeout(() => {
@@ -2719,6 +2853,181 @@ window.__ModuleLoader__.load({
       render() {
         return this.state.failed ? null : h(Preview, this.props)
       }
+    }
+
+    /**
+     * The glyph that sits in the sidebar's panel list. PanelRow renders it inside
+     * its own button, whose click switches the main column, so this click stops
+     * propagation and opens the sidebar panel instead.
+     */
+    function PanelGlyph(props) {
+      const size = (props && props.size) || 16
+      return h(
+        'span',
+        {
+          className: 'dsh-we-glyph',
+          'data-sidebar-panel': 'wallpaper-engine',
+          'data-open': sidebarOpen ? 'true' : 'false',
+          title: t('sidebarPanel'),
+          onPointerDown: (event) => event.stopPropagation(),
+          onClick: (event) => {
+            event.stopPropagation()
+            event.preventDefault()
+            setSidebarOpen(!sidebarOpen)
+          },
+        },
+        h(
+          'svg',
+          { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true' },
+          h('rect', { x: '2.5', y: '4', width: '19', height: '16', rx: '3', stroke: 'currentColor', 'stroke-width': '1.6' }),
+          h('circle', { cx: '8.5', cy: '9.5', r: '1.7', fill: 'currentColor' }),
+          h('path', { d: 'M3 17.5l5.2-4.6 4.1 3.4 3.1-2.6L21 17.5', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }),
+        ),
+      )
+    }
+
+    /** The wallpaper panel that replaces the sidebar list while it is open. */
+    function SidebarWallpaperPanel() {
+      useLocaleVersion()
+      useStoreVersion()
+      const [query, setQuery] = useState('')
+      const [filter, setFilter] = useState('recent')
+      useEffect(() => {
+        if (!data.state) loadState()
+        if (!data.library) loadLibrary()
+      }, [])
+      const library = data.library
+      const items = (library && library.items) || []
+      const current = currentItem()
+      const visible = useMemo(() => {
+        const needle = query.trim().toLowerCase()
+        const matched = items.filter((item) => {
+          if (filter === 'local' && item.source !== 'local') return false
+          if (filter === 'recent' && !usage[item.id]) return false
+          if (filter !== 'all' && filter !== 'local' && filter !== 'recent' && item.kind !== filter) return false
+          if (needle === '') return true
+          const haystack = `${item.title || ''} ${(item.tags || []).join(' ')} ${item.workshopId || ''}`.toLowerCase()
+          return haystack.includes(needle)
+        })
+        return sortByUsage(matched)
+      }, [items, filter, query, usageVersion])
+      const pick = (item) => {
+        recordUse(item, 'pick')
+        updateSettings({ enabled: true, mode: 'pin', pinned: item })
+      }
+      const chips = ['recent', 'all', 'scene', 'video', 'web', 'local']
+      return h(
+        'div',
+        { className: 'dsh-we-side' },
+        h(
+          'div',
+          { className: 'dsh-we-side-head' },
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-we-side-back',
+              title: t('back'),
+              onClick: () => setSidebarOpen(false),
+            },
+            '‹',
+            h('span', null, t('back')),
+          ),
+          h('span', { className: 'dsh-we-side-title' }, t('sidebarPanel')),
+        ),
+        current
+          ? h(
+              'div',
+              { className: 'dsh-we-side-now' },
+              current.preview
+                ? h('img', { className: 'dsh-we-side-thumb', src: mediaUrl(current.preview), alt: '', draggable: false })
+                : h('span', { className: 'dsh-we-side-thumb' }),
+              h(
+                'span',
+                { className: 'dsh-we-side-now-text' },
+                h('span', { className: 'dsh-we-side-now-title' }, current.title || t('unknown')),
+                h('span', { className: 'dsh-we-side-now-kind' }, current.kind === 'video' ? t('video') : t('scene')),
+              ),
+            )
+          : null,
+        h('input', {
+          className: 'dsh-we-side-search',
+          type: 'search',
+          value: query,
+          placeholder: t('search'),
+          onChange: (event) => setQuery(event.target.value),
+        }),
+        h(
+          'div',
+          { className: 'dsh-we-side-chips' },
+          chips.map((key) =>
+            h(
+              'button',
+              {
+                key,
+                type: 'button',
+                className: 'dsh-we-side-chip',
+                'data-active': filter === key ? 'true' : 'false',
+                onClick: () => setFilter(key),
+              },
+              t(key),
+            ),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'dsh-we-side-list' },
+          visible.length === 0
+            ? h('div', { className: 'dsh-we-side-empty' }, filter === 'recent' ? t('recentEmpty') : t('empty'))
+            : visible.map((item) =>
+                h(
+                  'button',
+                  {
+                    key: item.id,
+                    type: 'button',
+                    className: 'dsh-we-side-row',
+                    'data-active': current && current.id === item.id ? 'true' : 'false',
+                    title: item.title || '',
+                    onClick: () => pick(item),
+                  },
+                  item.preview
+                    ? h('img', { className: 'dsh-we-side-row-thumb', src: mediaUrl(item.preview), alt: '', draggable: false, loading: 'lazy' })
+                    : h('span', { className: 'dsh-we-side-row-thumb' }),
+                  h(
+                    'span',
+                    { className: 'dsh-we-side-row-text' },
+                    h('span', { className: 'dsh-we-side-row-title' }, item.title || t('unknown')),
+                    h(
+                      'span',
+                      { className: 'dsh-we-side-row-meta' },
+                      `${item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene')}${
+                        usageOf(item.id).count > 1 ? ` · ×${usageOf(item.id).count}` : ''
+                      }`,
+                    ),
+                  ),
+                ),
+              ),
+        ),
+      )
+    }
+
+    /** What the main column shows if that panel id is selected there. */
+    function SidebarOnlyPage() {
+      useLocaleVersion()
+      useStoreVersion()
+      return h(
+        'div',
+        { className: 'dsh-we-page' },
+        h('div', { className: 'dsh-we-head' },
+          h('div', { className: 'dsh-we-titlebox' },
+            h('span', { className: 'dsh-we-title' }, t('sectionTitle')),
+            h('span', { className: 'dsh-we-sub' }, t('sidebarOnlyHint')),
+          ),
+        ),
+        h('div', { className: 'dsh-we-card' },
+          h('button', { type: 'button', className: 'dsh-we-btn', onClick: () => setSidebarOpen(true) }, t('openSidebarPanel')),
+        ),
+      )
     }
 
     /** The settings page. */
@@ -3011,34 +3320,30 @@ window.__ModuleLoader__.load({
                 ),
                 h(
                   'div',
-                  { key: 'frame', className: 'dsh-we-grid' },
-                  h(Slider, {
-                    label: t('zoom'),
-                    value: settings.zoom,
-                    min: 100,
-                    max: 300,
-                    step: 1,
-                    display: `${settings.zoom}%`,
-                    onChange: (zoom) => updateSettings({ zoom }),
-                  }),
-                  h(Slider, {
-                    label: t('posX'),
-                    value: settings.posX,
-                    min: -50,
-                    max: 50,
-                    step: 1,
-                    display: `${settings.posX > 0 ? '+' : ''}${settings.posX}%`,
-                    onChange: (posX) => updateSettings({ posX }),
-                  }),
-                  h(Slider, {
-                    label: t('posY'),
-                    value: settings.posY,
-                    min: -50,
-                    max: 50,
-                    step: 1,
-                    display: `${settings.posY > 0 ? '+' : ''}${settings.posY}%`,
-                    onChange: (posY) => updateSettings({ posY }),
-                  }),
+                  { key: 'frame', className: 'dsh-we-chiprow' },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-we-btn',
+                      onClick: () => updateSettings({ zoom: DEFAULTS.zoom, posX: DEFAULTS.posX, posY: DEFAULTS.posY }),
+                    },
+                    t('resetFraming'),
+                  ),
+                  h('span', { className: 'dsh-we-hint' }, t('framingZoomFirst')),
+                ),
+                h(
+                  'div',
+                  { key: 'reset', className: 'dsh-we-chiprow' },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-we-btn',
+                      onClick: () => updateSettings({ ...LOOK_DEFAULTS }),
+                    },
+                    t('reset'),
+                  ),
                 ),
                 h(
                   'div',
@@ -3195,6 +3500,7 @@ window.__ModuleLoader__.load({
       try {
         return register()
       } catch (error) {
+        lastSlotError = String((error && error.message) || error)
         console.error(`[dsh-wallpaper-engine] ${label} registration skipped:`, error)
         return () => {}
       }
@@ -3216,6 +3522,16 @@ window.__ModuleLoader__.load({
         if (typeof ctx.effect === 'function') {
           ctx.effect(() => () => {
             stopVerifyPolling()
+            sidebarOpen = false
+            if (sidebarRegistration) {
+              try {
+                sidebarRegistration()
+              } catch {
+                /* already gone with the fiber */
+              }
+              sidebarRegistration = null
+            }
+            sidebarSlotHost = null
             if (styleRefs.base) styleRefs.base.remove()
             if (styleRefs.paint) styleRefs.paint.remove()
             styleRefs.base = null
@@ -3235,6 +3551,22 @@ window.__ModuleLoader__.load({
       slots.inject('shell.overlay', () =>
         registerSlot(() => slots.register({ name: 'shell.overlay', id: 'wallpaper-engine-layer', order: -10 }, Backdrop), 'shell.overlay'),
       )
+      slots.inject('sidebar.workspaces', (scoped) => {
+        sidebarSlotHost = scoped || slots
+        syncSidebarSlot()
+        return () => {
+          sidebarSlotHost = null
+        }
+      })
+      slots.inject('sidebar.panellist', () =>
+        registerSlot(
+          () => slots.register({ name: 'sidebar.panellist', id: 'wallpaper-engine', order: 20, label: () => t('sidebarPanel') }, PanelGlyph),
+          'sidebar.panellist',
+        ),
+      )
+      slots.inject('main', () =>
+        registerSlot(() => slots.register({ name: 'main', key: 'wallpaper-engine' }, SidebarOnlyPage), 'main'),
+      )
       slots.inject('settings.section', () =>
         registerSlot(
           () => slots.register({ name: 'settings.section', id: 'wallpaper-engine', order: 50, label: sectionLabel }, WallpaperSettings),
@@ -3250,3 +3582,6 @@ window.__ModuleLoader__.load({
     return { inject: ['slots'], apply }
   },
 })
+
+
+

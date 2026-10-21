@@ -40,6 +40,25 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 | --- | --- |
 | `shell.overlay` | 壁纸层。通过 `createPortal` 挂到 `document.body`，`z-index:-1`，在应用框架之下、画布之上。 |
 | `settings.section` | 「壁纸」设置页：开关、模式、显示器、库、滤镜、透明度。 |
+| `sidebar.panellist` + `main` | 侧栏里的壁纸入口：点一下把**侧栏列表区**换成壁纸列表，中间对话区不动；面板里点「返回」恢复会话列表。 |
+
+### 侧栏面板
+
+侧栏那一行图标不是装饰，点它就把左侧列表换成壁纸列表（会话列表让位，但中间对话不动），
+面板顶部有「返回」和齿轮（齿轮跳回设置页的壁纸小节）。
+
+实现上只有两条规则值得记住：
+
+- **单实例槽位（`single`）同优先级只能有一个注册**，抢占会抛
+  `single slot "sidebar.workspaces" already has a registration at priority 0`。
+  所以先注册 `main`（`key: 'wallpaper-engine'`，让侧栏出现这一行），再在
+  `slots.inject('sidebar.workspaces', …)` 的分支里以**更低优先级**（`-10`）注册替换面板——
+  单实例槽位只渲染优先级最低的那个，关闭时把它注销，官方会话列表就自己回来了。
+- 用户点侧栏行时 Harness 会调 `selectPanel(id)` 切走中间面板。壁纸面板挂载后立刻
+  `ctx.layout.selectPanel('conversation')` 切回来，所以中间永远是对话，只有左栏在换内容。
+
+面板是独立组件，不依赖设置页的数据：自己 `loadLibrary()`，自己按用量排序，瓦片可点即固定为壁纸。
+
 
 半透明的做法是把主题 token 在 `html[data-dsh-wallpaper="on"] body` 上覆写为
 `color-mix(in srgb, var(--dsw-static-neutral-bluish-NN) N%, transparent) !important`：
@@ -64,8 +83,9 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 再垫一张模糊副本 —— 那些都会让「预览」和窗口看起来不一样（曾经的「预览里出现两个壁纸」就是这么来的，
 自测 `preview.singleMedia` / `backdrop.singleMedia` 负责防回归）。
 
-「高级画面设置」默认折叠：壁纸本体模糊、分块模糊四块、缩放/左右/上下都在里面，
-再加一个「恢复默认画面」按钮（只重置画面参数，不动开关/壁纸选择）。
+「高级画面设置」默认折叠：壁纸本体模糊、分块模糊四块、漂移边距与「恢复默认画面」都在里面
+（只重置画面参数，不动开关/壁纸选择）。缩放和取景**没有滑杆**：滑杆调不出来效果，只有拖动/滚轮/角落按钮
+能对上你看到的画面，所以这里只留提示文字。
 
 ### 在预览上直接调大小和取景
 
@@ -74,13 +94,12 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 | 操作 | 效果 |
 | --- | --- |
 | 拖动预览 | 移动取景（左右 / 上下），松手才写盘；画面跟手走。只有放大后才有可移动的余量 |
-| **Alt+滚轮** | 缩放 100%–300%（普通滚轮不拦截，页面照常滚动） |
+| **滚轮 / 双指捏合** | 缩放 100%–300%；缩到上限时不再拦截，页面照常滚动 |
 | 右下角 `−  100%  ＋` | 同一步进 10%，点一次存一次 |
 | 双击 | 缩放与取景一起复位 |
-| 「缩放 / 左右 / 上下」滑杆 | 同一组数值的精确调节 |
 
-普通滚轮**故意不绑定缩放**：设置页要滚动，鼠标划过预览就缩小壁纸是说不通的，
-所以缩放只认 Alt+滚轮和角落按钮。
+100% 时拖不动是有意的：没有放大余量就没有可移动的区域，面板会提示「先放大再拖动取景」，
+这和壁纸引擎、图片裁剪器一致（拖动只移动溢出部分，不会把图拖出画框）。
 
 真实壁纸层和预览用**同一个** `framing()`：缩放是**改媒体本身的尺寸**（`width/height` 百分比）再用
 `left/top` 平移，不是给祖先加 `transform`。这条很关键：祖先一旦带 `transform`，前面那些
@@ -253,7 +272,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（37 项）
+### 自测（41 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -270,8 +289,11 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 （`frame.clamps`）及「设置值 = 实际生效值」（`frame.applied`）、`Range` 206 流式取字节、页面运行时错误。
 
 设置页开着时还会真派发事件：`preview.drag`（合成 pointerdown/move/up 后断言取景变了）、
-`preview.zoomButtons`（点角落 + 断言放大）、`preview.wheelNeutral`（普通滚轮必须不改缩放）、
-`preview.wheelAlt`（Alt+滚轮必须放大）。设置页关着时这四行记 `settings closed` 并通过。
+`preview.zoomButtons`（点角落 + 断言放大）、`preview.wheel`（滚轮必须改变缩放）、
+`preview.wheelLimit`（到 300% 后不再拦截页面滚动）。设置页关着时这些行记 `settings closed` 并通过。
+
+侧栏面板那一行（`sidebar.panel`）不看状态变量，而是真点图标：断言列表区被换成壁纸列表、
+会话列表消失、点「返回」后会话列表回来、中间对话区始终没被切走（`mainKept`）。
 
 **自测不会改你的设置**：滑块两项是对 `surfaces()` / `blockBlur()` 的纯算术断言；
 开关那三项走 `previewSettings()`（只重绘、不写 `localStorage`），结束一律按内存快照还原。
