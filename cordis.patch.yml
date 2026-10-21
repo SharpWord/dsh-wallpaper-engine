@@ -1,0 +1,6 @@
+# Mount the Host half of dsh-wallpaper-engine.
+# This adds one plugin row; the client half ships through package.json `dsh.client`
+# and registers the shell overlay + settings section on the Web UI.
+- insert:
+    - id: wallpaper-engine
+      name: 'dsh-wallpaper-engine'
