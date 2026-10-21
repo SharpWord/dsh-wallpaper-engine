@@ -55,8 +55,12 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
   所以先注册 `main`（`key: 'wallpaper-engine'`，让侧栏出现这一行），再在
   `slots.inject('sidebar.workspaces', …)` 的分支里以**更低优先级**（`-10`）注册替换面板——
   单实例槽位只渲染优先级最低的那个，关闭时把它注销，官方会话列表就自己回来了。
-- 用户点侧栏行时 Harness 会调 `selectPanel(id)` 切走中间面板。壁纸面板挂载后立刻
-  `ctx.layout.selectPanel('conversation')` 切回来，所以中间永远是对话，只有左栏在换内容。
+- 用户点侧栏行时 Harness 会调 `selectPanel(id)` 切走中间面板。壁纸面板挂载后立刻用
+  `selectPanel(null)` 切回对话（`null` 是官方「显示对话」的方式，传 `'conversation'` 会抛错），
+  所以中间永远是对话，只有左栏在换内容；万一 `layout` 服务取不到，仍会渲染一份完整界面，
+  不会把中间区留成空白。
+- `layout` 只能通过 `ctx.get('layout')` 取：本插件只 `inject: ['slots']`，直接读
+  `ctx.layout` 会抛 `cannot get property "layout" without inject`（这一条曾让点侧栏行后中间区变空白）。
 
 面板是独立组件，不依赖设置页的数据：自己 `loadLibrary()`，自己按用量排序，瓦片可点即固定为壁纸。
 
@@ -273,7 +277,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（41 项）
+### 自测（42 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -291,14 +295,18 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 
 自测会自己打开侧栏面板，然后真派发事件：`preview.drag`（合成 pointerdown/move/up 后断言取景变了）、
 `preview.zoomButtons`（点角落 + 断言放大）、`preview.wheel`（滚轮必须改变缩放）、
-`preview.wheelLimit`（到 300% 后不再拦截页面滚动）。打开失败时这些行记 `settings closed` 并通过。
+`preview.wheelLimit`（到 300% 后不再拦截页面滚动）。打不开面板时这些行记 `settings closed` 并通过。
 
-侧栏面板那一行（`sidebar.panel`）不看状态变量，而是真点图标：断言列表区被换成壁纸列表、
-会话列表消失、点「返回」后会话列表回来、中间对话区始终没被切走（`mainKept`）。
+侧栏两行不看状态变量，而是真派发点击：
 
-**自测不会改你的设置**：滑块两项是对 `surfaces()` / `blockBlur()` 的纯算术断言；
-开关那三项走 `previewSettings()`（只重绘、不写 `localStorage`），结束一律按内存快照还原。
-所以即使自测中途页面重载，也不会把你的浓度、开关留在测试值上。
+- `sidebar.panel`：点图标 → 列表区换成壁纸列表、会话列表消失、点「返回」后会话列表回来、
+  中间对话区始终没被切走（`mainKept`）。
+- `sidebar.rowClick`：点这一行的**文字**（`PanelRow` 会先 `selectPanel` 切走中间面板）→
+  侧栏面板必须打开、中间必须回到对话（`active=conversation`）、不能停在壁纸页。
+  这一行就是「点侧栏行后中间变空白」那个 bug 的回归测试。
+
+同一时刻只允许跑一轮自测（`selfTestRunning` 互斥）：两轮并行时会互相改 `settings`，
+一轮把壁纸层关掉、另一轮正在断言半透明，结果就会假失败。
 
 
 ### 方角
@@ -356,7 +364,7 @@ Windows 标题栏布局下，布局样式会给主区左上角加 16px 圆角（
 ## 自检（宿主侧触发）
 
 `POST /wallpaper-engine/api/verify` 会下发一次性令牌；页面每 5 秒 `ping` 一次，读到新令牌就跑一遍
-40 项自检（主题、注入的 CSS 长度、两个主题的规则、遮罩、文字阶梯、分块模糊是否只作用在伪元素上、
+42 项自检（主题、注入的 CSS 长度、两个主题的规则、遮罩、文字阶梯、分块模糊是否只作用在伪元素上、
 侧栏收起/展开后按钮是否仍可点、开关关闭后 token 是否完全还原、媒体 Range 请求、预览卡是否画出、
 **壁纸只有一张**（`preview.singleMedia` / `backdrop.singleMedia`）、拖动/角落按钮/滚轮绑定、
 页面错误），结果以 `selfTest` 字段回传。全部通过时 `ok:true`。设置页没打开时预览相关的行记为

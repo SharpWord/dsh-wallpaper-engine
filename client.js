@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b76'
+    const BUILD = 'b79'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -255,6 +255,19 @@ window.__ModuleLoader__.load({
         loadFailed: '无法加载壁纸库。',
         disabledNotice: '壁纸层已关闭。',
       },
+    }
+
+    /**
+     * Resolve the layout service without a hard dependency. `hostCtx.layout`
+     * throws ("cannot get property ... without inject") because this plugin only
+     * injects `slots`, so always go through `get()`.
+     */
+    function layoutService() {
+      try {
+        return hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('layout') : undefined
+      } catch {
+        return undefined
+      }
     }
 
     /** Resolve the locale id without assuming a snapshot shape. */
@@ -860,6 +873,7 @@ window.__ModuleLoader__.load({
 
     let lastVerifyToken = ''
     let selfTestBusy = false
+    let selfTestRunning = false
     let selfTestStartedAt = 0
     let selfTestProgress = []
     let selfTestResult = null
@@ -1016,6 +1030,19 @@ window.__ModuleLoader__.load({
 
     /** Exercise the plugin end to end and remember the verdict. */
     async function runSelfTest(token) {
+      // One run at a time: two overlapping runs fight over `settings` (one turns
+      // the layer off while the other asserts the translucent styles) and both
+      // results land in the same slot.
+      if (selfTestRunning) return null
+      selfTestRunning = true
+      try {
+        return await runSelfTestOnce(token)
+      } finally {
+        selfTestRunning = false
+      }
+    }
+
+    async function runSelfTestOnce(token) {
       const results = []
       selfTestProgress = results
       const add = (name, ok, detail) => {
@@ -1400,6 +1427,34 @@ window.__ModuleLoader__.load({
       } catch (error) {
         setSidebarOpen(false)
         add('sidebar.panel', false, (error && error.message) || 'dispatch failed')
+      }
+      // Clicking the row's label (not the glyph) must still open the sidebar and
+      // must never leave the main column showing our panel.
+      try {
+        const glyph = document.querySelector('.dsh-we-glyph')
+        const row = glyph && glyph.closest('button')
+        if (!row) {
+          add('sidebar.rowClick', true, 'row missing')
+        } else {
+          row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+          await wait(520)
+          const opened = Boolean(document.querySelector('.dsh-we-side'))
+          const mainStuck = Boolean(document.querySelector('.dsh-we-page:not(.dsh-we-compact)'))
+          const layout = layoutService()
+          const active = layout && layout.panelInfo && typeof layout.panelInfo.getSnapshot === 'function' ? layout.panelInfo.getSnapshot().activePanelId : ''
+          add(
+            'sidebar.rowClick',
+            opened && !mainStuck && !active,
+            `open=${opened} mainStuck=${mainStuck} active=${active || 'conversation'}`,
+          )
+          if (opened) {
+            setSidebarOpen(false)
+            await wait(240)
+          }
+        }
+      } catch (error) {
+        setSidebarOpen(false)
+        add('sidebar.rowClick', false, (error && error.message) || 'row click failed')
       }
       selfTestResult = {
         token,
@@ -2943,13 +2998,30 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** The main column shows nothing: this panel lives in the sidebar. */
+    /**
+     * Clicking the sidebar row (its label, not just the glyph) lands here. The
+     * sidebar surface is opened and the main column is handed back to the
+     * conversation. `selectPanel(null)` is the documented way back; passing
+     * 'conversation' throws because that is not a registered main key. The
+     * surface below is only a fallback, so the column can never go blank.
+     */
     function WallpaperMainPanel() {
+      useLocaleVersion()
+      useStoreVersion()
       useEffect(() => {
-        const layout = hostCtx && (hostCtx.layout || (hostCtx.get ? hostCtx.get('layout') : undefined))
-        if (layout && typeof layout.selectPanel === 'function') layout.selectPanel('conversation')
+        setSidebarOpen(true)
+        const layout = layoutService()
+        const timer = window.setTimeout(() => {
+          if (!layout || typeof layout.selectPanel !== 'function') return
+          try {
+            layout.selectPanel(null)
+          } catch {
+            /* keep the fallback page visible rather than a blank column */
+          }
+        }, 30)
+        return () => window.clearTimeout(timer)
       }, [])
-      return null
+      return h('div', { className: 'dsh-we-page' }, h(WallpaperSettings, {}))
     }
 
     /** The settings page. */
