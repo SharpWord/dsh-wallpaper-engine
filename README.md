@@ -73,10 +73,14 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 
 | 操作 | 效果 |
 | --- | --- |
-| 拖动预览 | 移动取景（左右 / 上下），松手才写盘 |
-| 滚轮 | 缩放 100%–300%，停下 260ms 后保存 |
+| 拖动预览 | 移动取景（左右 / 上下），松手才写盘；画面跟手走 |
+| **Alt+滚轮** | 缩放 100%–300%（普通滚轮不拦截，页面照常滚动） |
+| 右下角 `−  100%  ＋` | 同一步进 10%，点一次存一次 |
 | 双击 | 缩放与取景一起复位 |
 | 「缩放 / 左右 / 上下」滑杆 | 同一组数值的精确调节 |
+
+普通滚轮**故意不绑定缩放**：设置页要滚动，鼠标划过预览就缩小壁纸是说不通的，
+所以缩放只认 Alt+滚轮和角落按钮。
 
 真实壁纸层和预览用**同一个** `framing()`：`zoom` 转成外层容器的 `transform: scale()`（裁剪由容器
 `overflow:hidden` 负责，所以放大不会溢出窗口），`posX/posY` 转成 `object-position` 的百分比偏移。
@@ -254,7 +258,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（33 项）
+### 自测（37 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -269,6 +273,10 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 深色主题的自动配字（纯算术，不再临时切换页面主题）、浓度与分块模糊两个旋钮是否真的改变生成规则、
 壁纸库排序规则（`library.usageOrder`，合成数据）、五种显示方式（`fit.modes`）、缩放与取景的上下限
 （`frame.clamps`）及「设置值 = 实际生效值」（`frame.applied`）、`Range` 206 流式取字节、页面运行时错误。
+
+设置页开着时还会真派发事件：`preview.drag`（合成 pointerdown/move/up 后断言取景变了）、
+`preview.zoomButtons`（点角落 + 断言放大）、`preview.wheelNeutral`（普通滚轮必须不改缩放）、
+`preview.wheelAlt`（Alt+滚轮必须放大）。设置页关着时这四行记 `settings closed` 并通过。
 
 **自测不会改你的设置**：滑块两项是对 `surfaces()` / `blockBlur()` 的纯算术断言；
 开关那三项走 `previewSettings()`（只重绘、不写 `localStorage`），结束一律按内存快照还原。
