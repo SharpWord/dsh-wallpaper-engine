@@ -203,6 +203,16 @@ Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列�
 现在 `--dsw-specific-sidebar-fill` 在 `body` 上是透明的，只额外挂在 `[class*="sidebarCol"]` 上，
 填充属于侧栏本身；最外层 frame 保持透明。等价地说：**预览卡画什么，窗口就画什么**。
 
+**同一块填充只画一层**：`[class*="sidebarCol"]` 内部的 `[class*="_quietBars"]` 也会读
+`--dsw-specific-sidebar-fill`，于是侧栏被算了两遍（脚本按「CSS 覆盖后重新取计算值」量到 25% × 2 ≈ 44%，
+而主区只有 28% —— 这就是「侧栏和主区不一样」）。所以侧栏自己那一层改成直接写在列上，
+列内的 `_quietBars` 把 token 归零，最终侧栏 25%、主区 28%，差 3 个百分点看不出。
+
+**输入框上方那条白条不是背景色**：`[class*="_composerSeat"]` 用
+`background-image: linear-gradient(...)` 把消息列表淡出到外壳色，外壳透明之后这条渐变就落在浅色 token 上，
+在输入框正上方显出一条亮带。填充层级诊断（`stripPainters`）一开始只检查 `background-color` 才漏掉它，
+现在渐变也算 paint，直接 `background-image: none` 关掉 —— 输入框自己的玻璃和模糊已经足够把正文分开。
+
 | 层 | 位置 | 用到的 token | 浓度 20（最底） | 浓度 52（默认） | 浓度 100 |
 | --- | --- | --- | --- | --- | --- |
 | 外框 | 窗口、会话底色（含最外层 `_frame`） | `--dsw-alias-bg-base`、`--dsw-specific-sidebar-fill` | 0（透明） | 0（透明） | 0（透明） |
@@ -346,7 +356,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（53 项）
+### 自测（54 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -358,7 +368,8 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 
 覆盖：Host 三条接口、壁纸层与媒体是否真的加载（`<video readyState=4>`）、窗口本身没被填色
 （`shell.clear`：`body` 背景必须透明；`shell.frame`：占窗口 ≥90% 的那个元素背景也必须透明 ——
-后者就是「只改 bg-base 之后还是发灰」那个 bug 的回归测试）、主题半透明与文字反差、
+后者就是「只改 bg-base 之后还是发灰」那个 bug 的回归测试；`shell.composerSeat`：输入框所在的
+seat 不能再画渐变，否则浅色 token 会在输入框上方留一条白条）、主题半透明与文字反差、
 标题栏方角、徽标隐藏、分块模糊、侧栏「无包含块 / 收起 / 收起后按钮可点 / 再展开」、开关关掉后主题回滚为不透明、
 深色主题的自动配字（纯算术，不再临时切换页面主题）、字体颜色七项（`ink.unified` / `ink.levels` /
 `ink.custom` / `ink.fallback` / `ink.off` / `ink.contrastFloor` / `ink.ui`）、浓度与分块模糊两个旋钮是否真的改变生成规则
@@ -444,8 +455,8 @@ Windows 标题栏布局下，布局样式会给主区左上角加 16px 圆角（
 ## 自检（宿主侧触发）
 
 `POST /wallpaper-engine/api/verify` 会下发一次性令牌；页面每 5 秒 `ping` 一次，读到新令牌就跑一遍
-53 项自检（主题、注入的 CSS 长度、两个主题的规则、遮罩、文字阶梯、分块模糊是否只作用在伪元素上、
-**窗口没有被填色**（`shell.clear` / `shell.frame`）、侧栏收起/展开后按钮是否仍可点、
+54 项自检（主题、注入的 CSS 长度、两个主题的规则、遮罩、文字阶梯、分块模糊是否只作用在伪元素上、
+**窗口没有被填色**（`shell.clear` / `shell.frame` / `shell.composerSeat`）、侧栏收起/展开后按钮是否仍可点、
 开关关闭后 token 是否完全还原、媒体 Range 请求、预览卡是否画出、
 **壁纸只有一张**（`preview.singleMedia` / `backdrop.singleMedia`）、预览与窗口取景是否一致
 （`preview.parity`）、拖动/角落按钮/滚轮绑定、页面错误），结果以 `selfTest` 字段回传。

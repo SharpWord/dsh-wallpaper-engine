@@ -1,6 +1,6 @@
 {
   "name": "dsh-wallpaper-engine",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Puts a wallpaper behind DeepSeek Harness: the one Wallpaper Engine has active, one pinned from the Workshop library, or a picture dropped into a plain folder when Wallpaper Engine is not installed. Translucent panels, per-block blur, wallpaper-matched text contrast and a settings page with a live library picker.",
   "type": "module",
   "main": "index.js",

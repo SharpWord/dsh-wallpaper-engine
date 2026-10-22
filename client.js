@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b104'
+    const BUILD = 'b109'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -891,6 +891,21 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         panelInk: computedValue('[class*="_overlay"] [class*="_panel"]', '--dsw-alias-label-primary'),
         errors: pageErrors.join(' | ').slice(0, 400),
         wide: widePainters().join(' | ').slice(0, 460),
+        sidePainters: describePainters(sidePaintedElements(), 8).slice(0, 300),
+        stripPainters: describePainters(paintedAboveComposer(), 8).slice(0, 300),
+        cardPainters: describePainters(paintedInsideComposer(), 8).slice(0, 300),
+        rightBg: computedBackground('[data-rightbar-col]'),
+        bottomBg: computedBackground('[class*="bottomRow"]'),
+        aboveStack: (() => {
+          try {
+            const card = document.querySelector('[data-composer-card], [data-composer-seat]')
+            if (!card) return 'nocard'
+            const box = card.getBoundingClientRect()
+            return stackAtPoint('above', Math.round(window.innerWidth * 0.55), Math.round(box.top - 6))
+          } catch {
+            return 'error'
+          }
+        })(),
         selfTest: selfTestResult ? JSON.stringify(selfTestResult).slice(0, 6000) : '',
       }
       Object.assign(payload, describeLayer())
@@ -902,6 +917,135 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         await callHost('report', payload)
       } catch {
         /* diagnostics are best effort */
+      }
+    }
+
+    /**
+     * Everything painting at one point, topmost first. `widePainters` answers
+     * "who covers the window"; this answers "who is this one band made of" —
+     * the only reliable way to name a stray white strip above the composer.
+     * `pointer-events: none` layers (the wallpaper portal) are skipped by the
+     * browser, so what is listed is what a click would hit.
+     */
+    function stackAt(label, fractionX, fractionY) {
+      return stackAtPoint(
+        label,
+        Math.round(window.innerWidth * fractionX),
+        Math.round(window.innerHeight * fractionY),
+      )
+    }
+
+    /** Same, at a concrete pixel position (for "what is this one band"). */
+    function stackAtPoint(label, x, y) {
+      try {
+        const layers = document.elementsFromPoint(x, y).slice(0, 8).map((element) => {
+          const style = getComputedStyle(element)
+          const name = String(element.className || '')
+            .trim()
+            .split(/\s+/)
+            .slice(0, 2)
+            .join('.')
+          const tag = element.tagName.toLowerCase() + (name ? '.' + name : '')
+          const blur = style.backdropFilter && style.backdropFilter !== 'none' ? ' bf=' + style.backdropFilter : ''
+          return tag + '{' + style.backgroundColor + blur + '}'
+        })
+        return label + '@' + x + ',' + y + ' ' + layers.join(' > ')
+      } catch (error) {
+        return label + ': ' + ((error && error.message) || 'failed')
+      }
+    }
+
+    /** One-line description of each element that actually paints a fill. */
+    function describePainters(elements, limit) {
+      return elements
+        .slice(0, limit || 6)
+        .map((element) => {
+          const style = getComputedStyle(element)
+          const name = String(element.className || '')
+            .trim()
+            .split(/\s+/)
+            .slice(0, 2)
+            .join('.')
+          const rect = element.getBoundingClientRect()
+          const blur = style.backdropFilter && style.backdropFilter !== 'none' ? ' bf=' + style.backdropFilter : ''
+          const image = style.backgroundImage && style.backgroundImage !== 'none' ? ' img=' + style.backgroundImage.slice(0, 40) : ''
+          // No template literals in this file: the whole client module is one
+          // string constant, so a backtick here would end it.
+          return (
+            element.tagName.toLowerCase() +
+            (name ? '.' + name : '') +
+            '{' + style.backgroundColor + ' ' + Math.round(rect.width) + 'x' + Math.round(rect.height) +
+            ' y=' + Math.round(rect.top) + blur + image + '}'
+          )
+        })
+        .join(' > ')
+    }
+
+    /** Everything painting inside the composer card, in document order. */
+    function paintedInsideComposer() {
+      try {
+        const card = document.querySelector('[data-composer-card], [data-composer-seat]')
+        if (!card) return []
+        const out = []
+        for (const element of [card, ...card.querySelectorAll('*')]) {
+          if (alphaOf(getComputedStyle(element).backgroundColor) > 0.02) out.push(element)
+          if (out.length >= 12) break
+        }
+        return out
+      } catch {
+        return []
+      }
+    }
+
+    /**
+     * Everything inside the sidebar column that paints a fill. Two nested
+     * elements both reading the same 25% token composite to ~44% — that is what
+     * made the sidebar look heavier than the reading column.
+     */
+    function sidePaintedElements() {
+      try {
+        const root = document.querySelector('[class*="sidebarCol"]')
+        if (!root) return []
+        const out = []
+        for (const element of [root, ...root.querySelectorAll('*')]) {
+          const style = getComputedStyle(element)
+          if (alphaOf(style.backgroundColor) > 0.02) out.push(element)
+          if (out.length >= 12) break
+        }
+        return out
+      } catch {
+        return []
+      }
+    }
+
+    /**
+     * Everything painting in the 26px band immediately above the composer.
+     * Gradients count as paint too: a scroll-fade at the bottom of the message
+     * list is a `background-image` with a transparent background-color, and it
+     * reads as a bright strip exactly where the composer starts.
+     */
+    function paintedAboveComposer() {
+      try {
+        const card = document.querySelector('[data-composer-card], [data-composer-seat]')
+        if (!card) return []
+        const box = card.getBoundingClientRect()
+        const top = Math.max(0, box.top - 26)
+        const out = []
+        for (const element of document.body.querySelectorAll('*')) {
+          const style = getComputedStyle(element)
+          const paints =
+            alphaOf(style.backgroundColor) > 0.03 ||
+            (style.backgroundImage && style.backgroundImage !== 'none')
+          if (!paints) continue
+          const rect = element.getBoundingClientRect()
+          if (rect.height === 0 || rect.width < box.width * 0.5) continue
+          if (rect.bottom < top || rect.top > box.top) continue
+          out.push(element)
+          if (out.length >= 10) break
+        }
+        return out
+      } catch {
+        return []
       }
     }
 
@@ -1213,6 +1357,20 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           )
         } catch (error) {
           add('shell.frame', false, (error && error.message) || 'frame check failed')
+        }
+        // The composer seat fades the thread out with a gradient. Once the shell
+        // is transparent that gradient ends on a light token and shows as a
+        // white strip above the input box, so it must stay switched off.
+        try {
+          const seat = document.querySelector('[class*="_composerSeat"]')
+          const seatImage = seat ? getComputedStyle(seat).backgroundImage : 'none'
+          add(
+            'shell.composerSeat',
+            !seat || !seatImage || seatImage === 'none',
+            seat ? String(seatImage).slice(0, 60) : 'no seat',
+          )
+        } catch (error) {
+          add('shell.composerSeat', false, (error && error.message) || 'seat check failed')
         }
         const ink = inkFor(effectiveLuminance('light', surfaces().layer1), 'light')
         add('theme.ink', Number(ink.contrast) >= 4.4, JSON.stringify(ink))
@@ -2256,11 +2414,18 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         `  --dsw-alias-menu-group-header-fill: ${mix(PALETTE.layer2[themeKey], levels.glass)} !important;`,
         `  --dsw-alias-bg-layer-4: ${mix(PALETTE.layer3[themeKey], levels.layer3)} !important;`,
         '}',
-        // The sidebar column is the only surface the sidebar fill belongs to:
-        // the app also paints its outermost frame with this token, and a fill
-        // there veils the whole window (that was the white film over the image).
+        // The sidebar fill belongs to exactly ONE element. Handing the token to
+        // the column was wrong twice over: the app paints an inner wrapper
+        // (`_quietBars`) from the same token as well, so two 25% layers
+        // composited to ~44% and the sidebar read far heavier than the reading
+        // column. The token stays transparent everywhere and the column itself
+        // is painted, so exactly one 25% layer lands on the wallpaper.
+        `${selector} [class*="sidebarCol"],`,
+        `${selector} [class*="sidebarCol"] * {`,
+        `  --dsw-specific-sidebar-fill: rgba(0, 0, 0, 0) !important;`,
+        '}',
         `${selector} [class*="sidebarCol"] {`,
-        `  --dsw-specific-sidebar-fill: ${mix(PALETTE.sidebar[themeKey], levels.sidebar)} !important;`,
+        `  background-color: ${mix(PALETTE.sidebar[themeKey], levels.sidebar)} !important;`,
         '}',
       ]
       return lines.join('\n')
@@ -2419,6 +2584,12 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // `._*_treeBody`). Against a translucent sidebar that gradient no longer
         // matches the fill and shows up as a bright band above the avatar row.
         `${on} [class*="_treeBody"] > [class*="_fade"] { display: none !important; }`,
+        // The composer sits in a seat that fades the message list out towards
+        // the shell colour. With the shell transparent that gradient ends on a
+        // light token and reads as a white strip straight above the input box.
+        // The composer's own glass already separates it from the text, so the
+        // fade is switched off rather than recoloured.
+        `${on} [class*="_composerSeat"] { background-image: none !important; }`,
       ]
     }
 
