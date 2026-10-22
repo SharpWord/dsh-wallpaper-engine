@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b111'
+    const BUILD = 'b119'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -804,6 +804,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         mode: String(settings.mode),
         monitor: String(settings.monitor),
         surface: Number(settings.surface),
+        origin: String(window.screenX) + ',' + String(window.screenY) + ' ' + String(window.innerWidth) + 'x' + String(window.innerHeight),
         stateReady: Boolean(data.state),
         stateError: String(data.error || ''),
         monitors: data.state && data.state.monitors ? data.state.monitors.length : 0,
@@ -892,7 +893,10 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         panelFilter: computedValue('[class*="_overlay"] [class*="_panel"]', 'backdrop-filter'),
         panelInk: computedValue('[class*="_overlay"] [class*="_panel"]', '--dsw-alias-label-primary'),
         errors: pageErrors.join(' | ').slice(0, 400),
-        wide: widePainters().join(' | ').slice(0, 460),
+        wide: widePainters().join(' | ').slice(0, 1200),
+          sideProbe: stackAt(Math.round(window.innerWidth * 0.1), Math.round(window.innerHeight * 0.66)).slice(0, 300),
+          centreProbe: stackAt(Math.round(window.innerWidth * 0.5), Math.round(window.innerHeight * 0.66)).slice(0, 300),
+          rightProbe: stackAt(Math.round(window.innerWidth * 0.99) - 2, Math.round(window.innerHeight * 0.66)).slice(0, 300),
         sidePainters: describePainters(sidePaintedElements(), 8).slice(0, 300),
         stripPainters: describePainters(paintedAboveComposer(), 8).slice(0, 300),
         cardPainters: describePainters(paintedInsideComposer(), 8).slice(0, 300),
@@ -1057,6 +1061,27 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
      * painted with — the wallpaper layer is below all of them, so anything on
      * this list with a light background is what makes a wallpaper look milky.
      */
+    /**
+     * What actually paints inside each layout column. Names the element whose
+     * background makes a column look different from its neighbour.
+     */
+    /** Compact stack under a point, naming what actually paints there. */
+    function stackAt(px, py) {
+      try {
+        const stack = (document.elementsFromPoint(px, py) || [])
+          .slice(0, 6)
+          .map((node) => {
+            const own = getComputedStyle(node)
+            const name = String(node.className || node.tagName).replace(/\s+/g, '.').slice(0, 18)
+            const fill = own.backgroundColor === 'rgba(0, 0, 0, 0)' ? '-' : own.backgroundColor
+            return name + '{' + fill + '|' + (own.backdropFilter === 'none' ? '-' : own.backdropFilter) + '}'
+          })
+        return stack.join(' < ')
+      } catch (error) {
+        return 'stack failed ' + (error && error.message)
+      }
+    }
+
     function widePainters() {
       try {
         const area = window.innerWidth * window.innerHeight
@@ -1070,7 +1095,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           const image = style.backgroundImage || 'none'
           const filter = style.backdropFilter || 'none'
           out.push(
-            `${label} ${areaPercent}% bg=${style.backgroundColor}` +
+            `${label} x=${Math.round(rect.left)}..${Math.round(rect.right)} bg=${style.backgroundColor}` +
               `${image !== 'none' ? ' img=' + image.slice(0, 28) : ''}` +
               `${filter !== 'none' && filter ? ' bf=' + filter.slice(0, 20) : ''} ` +
               `z=${style.zIndex} op=${style.opacity} pos=${style.position} blend=${style.mixBlendMode}`,
@@ -1486,14 +1511,59 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         add('layout.badge', badge === 'missing' || badge === 'none', badge)
         const fade = computedValue('[class*="_treeBody"] > [class*="_fade"]', 'display')
         add('layout.sidebarFade', fade === 'missing' || fade === 'none', fade)
-        add('block.frost', computedPseudo('[class*="sidebarCol"]', '::before', 'backdrop-filter') !== 'none',
-          computedPseudo('[class*="sidebarCol"]', '::before', 'backdrop-filter'))
-        // The blur layer paints above the wallpaper; if the wallpaper layer
+        // The shared frost layer carries the smallest radius; every block layer
+        // only adds the difference on top. Equal sliders therefore leave no
+        // seam between two columns, and each block still ends up at its own
+        // slider value — both halves of that are checked here.
+        const blurBlocks = blockBlur()
+        const basePx = blurBase()
+        const frostFilter = computedValue('.dsh-we-frost', 'backdrop-filter')
+        const frostOk =
+          basePx === 0 ? frostFilter === 'missing' || frostFilter === 'none' : frostFilter === `blur(${basePx}px)`
+        add('block.frost', frostOk, `base=${basePx} frost=${frostFilter}`)
+        // Both columns must carry the SAME wash: the whole "why is there a
+        // line when the blur matches" complaint was one column painted
+        // differently from its neighbour. Zero 浓度 must paint neither.
+        const centreFill = computedValue('[class*="centerCol"]', 'background-color')
+        const sideFill = computedValue('[class*="sidebarCol"]', 'background-color')
+        const wantFill = surfaces().content
+        const centreAlpha = alphaOf(centreFill)
+        const sideAlpha = alphaOf(sideFill)
+        add(
+          'shell.oneFill',
+          Math.abs(centreAlpha - sideAlpha) < 0.005 &&
+            (wantFill === 0 ? centreAlpha < 0.02 : centreAlpha > 0.02),
+          `side=${sideFill} centre=${centreFill} content=${wantFill}`,
+        )
+        const pseudoBlur = (selector) => {
+          const hit = /blur\(([\d.]+)px\)/.exec(computedPseudo(selector, '::before', 'backdrop-filter') || '')
+          return hit ? Number(hit[1]) : 0
+        }
+        const splitRows = [
+          ['main', '[class*="centerCol"]', blurBlocks.main],
+          ['sidebar', '[class*="sidebarCol"]', blurBlocks.side],
+          ['right', '[data-rightbar-col]', blurBlocks.right],
+          ['bottom', '[class*="bottomRow"]', blurBlocks.bottom],
+        ].filter(([, selector]) => computedValue(selector, 'position') !== 'missing')
+        const splitOk = splitRows.every(([, selector, want]) => basePx + pseudoBlur(selector) === want)
+        add(
+          'block.split',
+          splitOk,
+          splitRows.map(([name, selector, want]) => `${name}=${basePx + pseudoBlur(selector)}/${want}`).join(' '),
+        )
+        // The blur layers paint above the wallpaper; if the wallpaper layer
         // wins the stacking order the sliders look dead (this regressed once).
+        // Order has to be wallpaper < shared frost < per-block blur.
         const wallZ = computedValue('.dsh-we-backdrop', 'z-index')
+        const frostZ = computedValue('.dsh-we-frost', 'z-index')
         const blurZ = computedPseudo('[class*="sidebarCol"]', '::before', 'z-index')
-        add('block.frostOnWallpaper', Number(blurZ) > Number(wallZ) && Number.isFinite(Number(wallZ)),
-          `wallpaper=${wallZ} blur=${blurZ}`)
+        add(
+          'block.frostOnWallpaper',
+          Number.isFinite(Number(wallZ)) &&
+            Number(wallZ) < Number(blurZ) &&
+            (basePx === 0 || (Number(wallZ) < Number(frostZ) && Number(frostZ) < Number(blurZ))),
+          `wallpaper=${wallZ} frost=${frostZ} blur=${blurZ}`,
+        )
 
         // The reported regression.
         for (const row of await testSidebar()) results.push(row)
@@ -1860,6 +1930,15 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       // closes it, and the shipped list is back afterwards.
       try {
         const glyph = document.querySelector('.dsh-we-glyph')
+        // The panel can already be open when the test starts (the user keeps it
+        // open while tuning); the sequence below proves open → close, so start
+        // from the closed state instead of assuming it.
+        if (glyph && document.querySelector('.dsh-we-side')) {
+          selfTestStep = 'sidebar.panel: normalise'
+          glyph.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+          await until(() => !document.querySelector('.dsh-we-side'))
+          await wait(220)
+        }
         const composerBefore = Boolean(document.querySelector('[data-composer-card], [data-composer-seat]'))
         if (!glyph) {
           add('sidebar.panel', false, 'glyph missing')
@@ -2418,6 +2497,10 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         `  --dsw-specific-input-major: ${fill} !important;`,
         `  --dsh-we-glass: ${fill} !important;`,
         `  --dsh-we-content-fill: ${mix(PALETTE.layer1[themeKey], levels.content)} !important;`,
+        // The one wash every column shares. It is painted on the window-wide
+        // frost layer, below all app content, so no column can be a shade
+        // different from its neighbour.
+        `  --dsh-we-column-fill: ${mix(PALETTE.layer1[themeKey], levels.content)} !important;`,
         `  --dsh-we-glass-line: color-mix(in srgb, var(--dsw-alias-border-l2) 55%, transparent) !important;`,
         // Opaque sheets the app paints with its own tokens.
         `  --dsw-alias-bg-module-platform: ${mix(PALETTE.module[themeKey], levels.layer1)} !important;`,
@@ -2439,18 +2522,13 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         `  --dsw-alias-menu-group-header-fill: ${mix(PALETTE.layer2[themeKey], levels.glass)} !important;`,
         `  --dsw-alias-bg-layer-4: ${mix(PALETTE.layer3[themeKey], levels.layer3)} !important;`,
         '}',
-        // The sidebar fill belongs to exactly ONE element. Handing the token to
-        // the column was wrong twice over: the app paints an inner wrapper
-        // (`_quietBars`) from the same token as well, so two 25% layers
-        // composited to ~44% and the sidebar read far heavier than the reading
-        // column. The token stays transparent everywhere and the column itself
-        // is painted, so exactly one 25% layer lands on the wallpaper.
+        // The sidebar fill is transparent everywhere: handing that 25% token to
+        // the column is what made the sidebar a shade away from the reading
+        // column (and, on the frame, what veiled the whole window). Both columns
+        // now take their glass from the one window-wide wash on the frost layer.
         `${selector} [class*="sidebarCol"],`,
         `${selector} [class*="sidebarCol"] * {`,
         `  --dsw-specific-sidebar-fill: rgba(0, 0, 0, 0) !important;`,
-        '}',
-        `${selector} [class*="sidebarCol"] {`,
-        `  background-color: ${mix(PALETTE.sidebar[themeKey], levels.sidebar)} !important;`,
         '}',
       ]
       return lines.join('\n')
@@ -2541,6 +2619,16 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     }
 
     /**
+     * The blur every block pays the same way: the smallest of the four
+     * sliders. Painted once on a window-wide layer under the app, so equal
+     * values leave no seam between the columns (see `blockRules`).
+     */
+    function blurBase() {
+      const blocks = blockBlur()
+      return Math.min(blocks.main, blocks.side, blocks.right, blocks.bottom)
+    }
+
+    /**
      * Frosted glass per layout block: each column blurs what is behind itself,
      * so the wallpaper can be crisp in the reading area and soft at the edges.
      *
@@ -2551,21 +2639,37 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
      * toggle inside the collapsing rail and made the sidebar impossible to
      * reopen. A `::before` paint layer blurs the same pixels without touching
      * layout containment.
+     *
+     * Why an extra base layer: two adjacent columns with the SAME radius still
+     * show a step at their shared edge, because the backdrop of the later
+     * column already contains the earlier column's own filtered output and
+     * fill. The smallest radius is therefore paid ONCE on a single window-wide
+     * frost layer painted under the app, and each block only adds the
+     * difference on top. Equal sliders → no per-block layer at all → no seam.
      */
     function blockRules() {
       const blocks = blockBlur()
+      const base = blurBase()
       const on = 'html[data-dsh-wallpaper="on"]'
-      const rule = (selector, pixels) => [
-        `${on} ${selector} { position: relative; }`,
-        pixels > 0
-          ? `${on} ${selector}::before { content: ""; position: absolute; inset: 0; z-index: -1;` +
-            ` pointer-events: none; backdrop-filter: blur(${pixels}px) !important; }`
-          : `${on} ${selector}::before { content: ""; position: absolute; inset: 0; z-index: -1;` +
-            ` pointer-events: none; backdrop-filter: none !important; }`,
-      ]
+      const rule = (selector, pixels) => {
+        const extra = Math.max(0, pixels - base)
+        return [
+          `${on} ${selector} { position: relative; }`,
+          extra > 0
+            ? `${on} ${selector}::before { content: ""; position: absolute; inset: 0; z-index: -1;` +
+              ` pointer-events: none; backdrop-filter: blur(${extra}px) !important; }`
+            : `${on} ${selector}::before { content: ""; position: absolute; inset: 0; z-index: -1;` +
+              ` pointer-events: none; backdrop-filter: none !important; }`,
+        ]
+      }
       return [
-        // The reading column keeps a thin wash so text never sits on bare photo.
-        `${on} [class*="centerCol"] { background: var(--dsh-we-content-fill) !important; }`,
+        // Both columns take the SAME wash. Two different alphas side by side
+        // (the sidebar used to be a shade lighter by design) is a visible step
+        // even when both blur sliders agree - that step is the line the user
+        // kept pointing at. The frame still paints nothing, so the titlebar
+        // stays clear.
+        `${on} [class*="centerCol"], ${on} [class*="sidebarCol"]` +
+          ` { background-color: var(--dsh-we-column-fill) !important; }`,
         ...rule('[class*="centerCol"]', blocks.main),
         ...rule('[class*="sidebarCol"]', blocks.side),
         ...rule('[data-rightbar-col]', blocks.right),
@@ -2897,8 +3001,11 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
 /* z-index -3: the wallpaper has to sit BEHIND the per-block blur layers
    (::before with z-index -1), otherwise the opaque wallpaper paints over
    them and the per-block blur sliders look dead. -1 is taken by the blur
-   layers inside the columns; -2 is left free for future scrim layers. */
+   layers inside the columns; -2 is the shared frost layer that every block
+   pays once (see blockRules/blurBase) — it must stay above the wallpaper and
+   below the per-block layers. */
 .dsh-we-backdrop { position: fixed; inset: 0; z-index: -3; pointer-events: none; overflow: hidden; contain: strict; }
+.dsh-we-frost { position: fixed; inset: 0; z-index: -2; pointer-events: none; }
 .dsh-we-backdrop-viewport { position: absolute; inset: 0; overflow: hidden; }
 .dsh-we-backdrop-media { position: absolute; display: block; }
 .dsh-we-backdrop-scrim { position: absolute; inset: 0; }
@@ -3071,6 +3178,8 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
             }
           : null
 
+      const frostPx = blurBase()
+
       const layer = h(
         'div',
         {
@@ -3128,7 +3237,18 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         h('div', { className: 'dsh-we-backdrop-scrim', style: { background: 'var(--dsh-we-scrim, rgba(0, 0, 0, 0))' } }),
       )
 
-      return reactDom.createPortal(layer, document.body)
+      // One window-wide frost layer under the app. Every block shares this
+      // radius, so two columns with the same slider value have nothing left to
+      // differ over; a block only gets its own layer for the extra on top.
+      //
+      const frost = h('div', {
+        key: 'frost',
+        className: 'dsh-we-frost',
+        'aria-hidden': 'true',
+        style: { backdropFilter: frostPx > 0 ? `blur(${frostPx}px)` : undefined },
+      })
+
+      return reactDom.createPortal([layer, frost], document.body)
     }
 
     // ------------------------------------------------------------------
@@ -3633,13 +3753,14 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           h(
             'div',
             { className: 'dsh-we-preview-shell' },
-            // The real window is a 23% sidebar, a reading column with its own
-            // wash, and a bottom composer row. The preview draws only those
-            // tints — no drawn-on text or fake chrome — so what it shows is the
-            // wallpaper seen through the same percentages the app uses.
+            // The real window paints ONE wash across both columns (a per-column
+            // shade difference is the "分界线" this preview used to reproduce),
+            // plus a bottom composer row. The preview draws only those tints —
+            // no drawn-on text or fake chrome — so what it shows is the
+            // wallpaper seen through the same number the app uses.
             h('div', {
               className: 'dsh-we-preview-side',
-              style: { background: fillOf(levels.sidebar), backdropFilter: frostOf(blocks.side) },
+              style: { background: fillOf(levels.content), backdropFilter: frostOf(blocks.side) },
             }),
             h('div', {
               className: 'dsh-we-preview-main',
