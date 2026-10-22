@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b97'
+    const BUILD = 'b102'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -890,6 +890,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         panelFilter: computedValue('[class*="_overlay"] [class*="_panel"]', 'backdrop-filter'),
         panelInk: computedValue('[class*="_overlay"] [class*="_panel"]', '--dsw-alias-label-primary'),
         errors: pageErrors.join(' | ').slice(0, 400),
+        wide: widePainters().join(' | ').slice(0, 460),
         selfTest: selfTestResult ? JSON.stringify(selfTestResult).slice(0, 6000) : '',
       }
       Object.assign(payload, describeLayer())
@@ -901,6 +902,46 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         await callHost('report', payload)
       } catch {
         /* diagnostics are best effort */
+      }
+    }
+
+    /**
+     * Enumerate everything that paints a fill wide enough to read as a film
+     * across the window. Naming the element beats guessing which token the app
+     * painted with — the wallpaper layer is below all of them, so anything on
+     * this list with a light background is what makes a wallpaper look milky.
+     */
+    function widePainters() {
+      try {
+        const area = window.innerWidth * window.innerHeight
+        if (!area || !document.body) return []
+        const out = []
+        const push = (label, element) => {
+          const rect = element.getBoundingClientRect()
+          const style = getComputedStyle(element)
+          const areaPercent = Math.round(((rect.width * rect.height) / area) * 100)
+          if (areaPercent < 20) return
+          const image = style.backgroundImage || 'none'
+          const filter = style.backdropFilter || 'none'
+          out.push(
+            `${label} ${areaPercent}% bg=${style.backgroundColor}` +
+              `${image !== 'none' ? ' img=' + image.slice(0, 28) : ''}` +
+              `${filter !== 'none' && filter ? ' bf=' + filter.slice(0, 20) : ''} ` +
+              `z=${style.zIndex} op=${style.opacity} pos=${style.position} blend=${style.mixBlendMode}`,
+          )
+        }
+        push('html', document.documentElement)
+        push('body', document.body)
+        for (const element of document.body.querySelectorAll('*')) {
+          const rect = element.getBoundingClientRect()
+          if (rect.width * rect.height < area * 0.45) continue
+          const className = typeof element.className === 'string' ? element.className.slice(0, 30) : ''
+          push(`${element.tagName.toLowerCase()}${className ? '.' + className.replace(/\s+/g, '.') : ''}`, element)
+          if (out.length >= 16) break
+        }
+        return out
+      } catch {
+        return ['error']
       }
     }
 
@@ -1137,6 +1178,28 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // The window shell has no fill of its own any more: the constant frame
         // fill was the white film a light theme showed over the wallpaper.
         add('shell.clear', alphaOf(bodyBg) < 0.06, `body ${bodyBg}`)
+        // …and nothing wide may paint over it either. The app fills its
+        // outermost `_frame` element with the sidebar token, so a translucent
+        // sidebar fill veiled the entire window: the wallpaper looked milky in
+        // this build and crisp in the preview card, which paints no frame.
+        try {
+          const viewport = window.innerWidth * window.innerHeight
+          let widest = null
+          for (const element of document.body.querySelectorAll('*')) {
+            const rect = element.getBoundingClientRect()
+            const area = rect.width * rect.height
+            if (area < viewport * 0.9) continue
+            if (!widest || area > widest.area) widest = { element, area }
+          }
+          const framePaint = widest ? getComputedStyle(widest.element).backgroundColor : 'none'
+          add(
+            'shell.frame',
+            !widest || alphaOf(framePaint) < 0.06,
+            widest ? `${widest.element.tagName.toLowerCase()} ${framePaint}` : 'no wide element',
+          )
+        } catch (error) {
+          add('shell.frame', false, (error && error.message) || 'frame check failed')
+        }
         const ink = inkFor(effectiveLuminance('light', surfaces().layer1), 'light')
         add('theme.ink', Number(ink.contrast) >= 4.4, JSON.stringify(ink))
 
@@ -1565,7 +1628,17 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
             const previewCover = coverage(previewBox, previewMedia)
             const backCover = coverage(backBox, backMedia)
             const same = Math.abs(previewCover - backCover) < 0.03
-            add('preview.parity', same, `preview=${previewCover.toFixed(3)} window=${backCover.toFixed(3)} zoom=${ratio.toFixed(2)}`)
+            const previewRect = previewBox.getBoundingClientRect()
+            const mediaRect = previewMedia.getBoundingClientRect()
+            const mediaStyle = getComputedStyle(previewMedia)
+            add(
+              'preview.parity',
+              same,
+              `preview=${previewCover.toFixed(3)} window=${backCover.toFixed(3)} zoom=${ratio.toFixed(2)} ` +
+                `box=${Math.round(previewRect.width)}x${Math.round(previewRect.height)} ` +
+                `media=${Math.round(mediaRect.width)}x${Math.round(mediaRect.height)} ` +
+                `css=${mediaStyle.width}/${mediaStyle.height} bg=${mediaStyle.backgroundSize}`,
+            )
           } else {
             add('preview.parity', true, 'surface missing')
           }
@@ -2120,7 +2193,11 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // white film a light theme showed over every wallpaper; the adaptive
         // veil inside the wallpaper layer already handles dark pictures.
         `  --dsw-alias-bg-base: rgba(0, 0, 0, 0) !important;`,
-        `  --dsw-specific-sidebar-fill: ${mix(PALETTE.sidebar[themeKey], levels.sidebar)} !important;`,
+        // …and the sidebar fill belongs to the sidebar, not to the frame: the
+        // app paints its outermost `_frame` element with this same token, so a
+        // translucent value here veiled the whole window. It is set again on
+        // `[class*="sidebarCol"]` below, which is the only place it is meant for.
+        `  --dsw-specific-sidebar-fill: rgba(0, 0, 0, 0) !important;`,
         `  --dsw-alias-bg-layer-1: ${mix(PALETTE.layer1[themeKey], levels.layer1)} !important;`,
         `  --dsw-alias-bg-layer-2: ${mix(PALETTE.layer2[themeKey], levels.layer2)} !important;`,
         `  --dsw-alias-bg-layer-3: ${mix(PALETTE.layer3[themeKey], levels.layer3)} !important;`,
@@ -2150,6 +2227,12 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // Remaining opaque strips: menu group headers and hover rows.
         `  --dsw-alias-menu-group-header-fill: ${mix(PALETTE.layer2[themeKey], levels.glass)} !important;`,
         `  --dsw-alias-bg-layer-4: ${mix(PALETTE.layer3[themeKey], levels.layer3)} !important;`,
+        '}',
+        // The sidebar column is the only surface the sidebar fill belongs to:
+        // the app also paints its outermost frame with this token, and a fill
+        // there veils the whole window (that was the white film over the image).
+        `${selector} [class*="sidebarCol"] {`,
+        `  --dsw-specific-sidebar-fill: ${mix(PALETTE.sidebar[themeKey], levels.sidebar)} !important;`,
         '}',
       ]
       return lines.join('\n')
