@@ -108,7 +108,7 @@ Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列�
 
 | token | 浅色来源 | 深色来源 |
 | --- | --- | --- |
-| `--dsw-alias-bg-base` | `bluish-00` | `bluish-950` |
+| `--dsw-alias-bg-base` | 透明（窗口不铺色） | 透明（窗口不铺色） |
 | `--dsw-specific-sidebar-fill` | `bluish-50` | `bluish-900` |
 | `--dsw-alias-bg-layer-1` | `bluish-00` | `bluish-875` |
 | `--dsw-alias-bg-layer-2` | `bluish-00` | `bluish-850` |
@@ -121,8 +121,9 @@ Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列�
 （`placement()` 决定裁剪/留边 → 遮罩 → 侧栏/阅读区/底栏三层玻璃 → 输入胶囊）。
 预览盒的宽高比直接取窗口比例，改任一滑杆它立刻重画，所以看到的就是窗口里的样子。
 
-预览上**只有一张壁纸**：一个媒体元素 + 三层真实的半透明色块（23% 侧栏、阅读区、底部 13% 的输入行），
-透明度来自和真实窗口同一套 `surfaces()` / `blockBlur()`。不画假文字、假线条、假按钮，也不在壁纸后面
+预览上**只有一张壁纸**：一个媒体元素 + 两个真实的半透明色块（侧栏、阅读区）和一个底部输入胶囊，
+透明度来自和真实窗口同一套 `surfaces()` / `blockBlur()`；窗口本身不铺色，预览也就不铺。
+不画假文字、假线条、假按钮，也不在壁纸后面
 再垫一张模糊副本 —— 那些都会让「预览」和窗口看起来不一样（曾经的「预览里出现两个壁纸」就是这么来的，
 自测 `preview.singleMedia` / `backdrop.singleMedia` 负责防回归）。
 
@@ -182,13 +183,17 @@ Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列�
 
 ### 每块面板的浓度
 
-「浓度」是一个 20–100 的总强度，按曲线分成三层：外框和侧栏保持很薄（壁纸整窗可见），
-内容面（卡片、代码、气泡）中等玻璃，浮层面（胶囊、输入框、菜单、弹层）最实 —— 但**没有一处是实心白**：
+「浓度」是一个 20–100 的总强度，按曲线分成三层：侧栏保持很薄，内容面（卡片、代码、气泡）中等玻璃，
+浮层面（胶囊、输入框、菜单、弹层）最实 —— 但**没有一处是实心白**：
 列背后的壁纸本来就被分块模糊过，半透明填充压上去就是磨砂效果。
+
+**窗口本身不填色**：`--dsw-alias-bg-base` 被覆盖成透明。以前这里按浓度铺了 16% 的白，
+浅色主题下就是一整块盖在壁纸上的白膜 —— 你截图里那层「白色的遮罩」正是它。
+现在只有真正是面板的地方才有填充，两块面板之间的壁纸是原样的。
 
 | 层 | 位置 | 用到的 token | 浓度 52（默认） | 浓度 100 |
 | --- | --- | --- | --- | --- |
-| 外框 | 主框架、会话底色 | `--dsw-alias-bg-base` | 16% | 26% |
+| 外框 | 窗口、会话底色 | `--dsw-alias-bg-base` | 0（透明） | 0（透明） |
 | 外框 | 左侧栏 | `--dsw-specific-sidebar-fill` | 25% | 38% |
 | 阅读区 | 中间列本身（轨迹/正文直接坐在这上面） | `--dsh-we-content-fill` | 28% | 44% |
 | 内容 | 卡片、气泡、平台模块 | `--dsw-alias-bg-layer-1`、`--dsw-specific-bubble`、`--dsw-alias-bg-module-platform` | 47% | 84% |
@@ -234,7 +239,7 @@ diff / 文件改动卡片（`[data-changed-files]`）和它的悬停预览（`[d
 | 模式 | 行为 |
 | --- | --- |
 | 跟随壁纸（默认） | 量壁纸平均亮度，在**纯黑**和**纯白**之间挑一个 —— 挑的是「在四种面上都还能看」的那个，不是只在正文上能看的那个 |
-| 自定义 | 用你选的颜色，预设白/浅灰/墨黑三颗，也可以开取色器选任意颜色 |
+| 自定义 | 用你选的颜色，预设白/浅灰/墨黑三颗，也可以开取色器选任意颜色。选的颜色在这个主题下对比度不够（例如浅色主题里选纯白）时自动退回解出来的基色，并在设置里标一句「在这里太淡，已改用自动色」—— 不会出现字看不见还说不清原因的情况 |
 | 主题默认 | 完全不动字色，交回 Harness 自己的 token |
 
 关键点：**整个窗口只有一种基色**。以前是每个面各自解一套阶梯，侧栏、正文、输入框会解出三种不同的灰，
@@ -255,8 +260,10 @@ diff / 文件改动卡片（`[data-changed-files]`）和它的悬停预览（`[d
 覆盖的 token：`--dsw-alias-label-primary/secondary/tertiary/caption/quaternary`。
 
 自测里的 `ink.unified`（四个面解出来的三级色必须完全相同）、`ink.levels`（滑块真能拉开层级）、
-`ink.custom`（选的白就是白）、`ink.contrastFloor`（每个面都过地板）、`ink.ui`（三个按钮一个不少）
-`ink.off`（选「主题默认」时一条覆盖规则都不生成）就是这行的回归保护。设置里那一行会实时显示当前对比度，例如 `对比度 13.22:1 · #0b0d11`。
+`ink.custom`（选的白就是白）、`ink.fallback`（浅色主题里硬选白色 → 落地是黑、`fellBack=true`）、
+`ink.contrastFloor`（每个面都过地板）、`ink.ui`（三个按钮一个不少）、
+`ink.off`（选「主题默认」时一条覆盖规则都不生成）就是这行的回归保护。
+设置里那一行会实时显示当前对比度，例如 `对比度 13.22:1 · #0b0d11`。
 
 
 ### 隐藏「预览版」
@@ -327,7 +334,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（49 项）
+### 自测（51 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -337,10 +344,11 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0.0.1:<端口>/wallpaper-engine/api/state
 ```
 
-覆盖：Host 三条接口、壁纸层与媒体是否真的加载（`<video readyState=4>`）、主题半透明与文字反差、
+覆盖：Host 三条接口、壁纸层与媒体是否真的加载（`<video readyState=4>`）、窗口本身没被填色
+（`shell.clear`：计算的 `body` 背景必须是透明的）、主题半透明与文字反差、
 标题栏方角、徽标隐藏、分块模糊、侧栏「无包含块 / 收起 / 收起后按钮可点 / 再展开」、开关关掉后主题回滚为不透明、
-深色主题的自动配字（纯算术，不再临时切换页面主题）、字体颜色六项（`ink.unified` / `ink.levels` /
-`ink.custom` / `ink.off` / `ink.contrastFloor` / `ink.ui`）、浓度与分块模糊两个旋钮是否真的改变生成规则、
+深色主题的自动配字（纯算术，不再临时切换页面主题）、字体颜色七项（`ink.unified` / `ink.levels` /
+`ink.custom` / `ink.fallback` / `ink.off` / `ink.contrastFloor` / `ink.ui`）、浓度与分块模糊两个旋钮是否真的改变生成规则、
 壁纸库排序规则（`library.usageOrder`，合成数据）、五种显示方式（`fit.modes`）、缩放与取景的上下限
 （`frame.clamps`）及「设置值 = 实际生效值」（`frame.applied`）、`Range` 206 流式取字节、页面运行时错误。
 

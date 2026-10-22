@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b95'
+    const BUILD = 'b97'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -138,6 +138,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         inkOff: 'Theme default',
         inkLevels: 'Tier contrast',
         inkRatio: 'Contrast',
+        inkFallback: 'too pale here, using the solved colour',
         scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
@@ -242,6 +243,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         inkOff: '主题默认',
         inkLevels: '层级对比',
         inkRatio: '对比度',
+        inkFallback: '在这里太淡，已改用自动色',
         scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
@@ -871,9 +873,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         })(),
         badgeDisplay: computedValue('[class*="_previewBadge"]', 'display'),
         inkLight: JSON.stringify(inkFor(effectiveLuminance('light', surfaces().layer1), 'light')),
-        inkChrome: JSON.stringify(
-          inkFor(effectiveLuminance('light', Math.min(surfaces().base, surfaces().sidebar)), 'light'),
-        ),
+        inkChrome: JSON.stringify(inkFor(effectiveLuminance('light', surfaces().sidebar), 'light')),
         inkDarkTheme: JSON.stringify(inkFor(effectiveLuminance('dark', surfaces().layer1), 'dark')),
         bodyInk: computedValue('body', '--dsw-alias-label-primary'),
         pillInk: computedValue('[data-composer-stat] > :is(button, span)', '--dsw-alias-label-primary'),
@@ -1134,12 +1134,14 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // Translucency, ink and layout rules.
         const bodyBg = getComputedStyle(document.body).backgroundColor
         add('theme.translucent', alphaOf(bodyBg) < 0.92, bodyBg)
+        // The window shell has no fill of its own any more: the constant frame
+        // fill was the white film a light theme showed over the wallpaper.
+        add('shell.clear', alphaOf(bodyBg) < 0.06, `body ${bodyBg}`)
         const ink = inkFor(effectiveLuminance('light', surfaces().layer1), 'light')
         add('theme.ink', Number(ink.contrast) >= 4.4, JSON.stringify(ink))
 
-        // The four surfaces the one ink colour has to survive.
+        // The three surfaces the one ink colour has to survive.
         const inkScopes = [
-          ['base', surfaces().base],
           ['content', surfaces().content],
           ['sidebar', surfaces().sidebar],
           ['glass', surfaces().glass],
@@ -1177,14 +1179,21 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           add('ink.levels', flatGap < 0.05 && deepGap > flatGap + 0.12,
             `flat=${flatGap.toFixed(2)} deep=${deepGap.toFixed(2)} ${deep.tertiary}`)
           // A picked colour really is used, verbatim as the primary.
-          previewSettings({ inkMode: 'custom', inkColor: '#ffffff' })
+          previewSettings({ inkMode: 'custom', inkColor: '#0b0d11' })
           const picked = inkFor(background(), theme)
-          add('ink.custom', picked.primary === '#ffffff' && picked.ladder === 'light',
+          add('ink.custom', picked.primary === '#0b0d11' && picked.ladder === 'dark',
             `${picked.primary} ladder=${picked.ladder}`)
+          // …but a pick the theme cannot carry gives way to the solved extreme,
+          // and says so: white text on a light theme's glass is invisible.
+          previewSettings({ inkMode: 'custom', inkColor: '#ffffff' })
+          const weak = inkFor(background(), theme)
+          add('ink.fallback', weak.base !== '#ffffff' && weak.fellBack === true && weak.contrast >= 4.4,
+            `picked=#ffffff used=${weak.base} contrast=${weak.contrast} fellBack=${weak.fellBack}`)
           previewSettings(inkSnapshot)
         } catch (error) {
           add('ink.levels', false, (error && error.message) || 'ink levels failed')
           add('ink.custom', false, (error && error.message) || 'ink custom failed')
+          add('ink.fallback', false, (error && error.message) || 'ink fallback failed')
         }
 
         // `off` must hand the label tokens back to the theme: no override in the
@@ -1266,7 +1275,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // than by flipping the attribute: a temporary flip flashes the whole UI
         // (and the desktop caption) for a check that is pure arithmetic anyway.
         try {
-          const chrome = Math.min(surfaces().base, surfaces().sidebar)
+          const chrome = surfaces().sidebar
           const lightPick = inkFor(effectiveLuminance('light', chrome), 'light')
           const darkPick = inkFor(effectiveLuminance('dark', chrome), 'dark')
           const darkRatio = contrastOf(luminanceOf(darkPick.primary), effectiveLuminance('dark', chrome))
@@ -1288,8 +1297,8 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           const low = surfaces(20)
           add(
             'slider.strength',
-            high.base > low.base && high.layer1 > low.layer1 && high.glass > low.glass && high.content > low.content,
-            `base ${low.base}→${high.base} · layer1 ${low.layer1}→${high.layer1} · ` +
+            high.sidebar > low.sidebar && high.layer1 > low.layer1 && high.glass > low.glass && high.content > low.content,
+            `sidebar ${low.sidebar}→${high.sidebar} · layer1 ${low.layer1}→${high.layer1} · ` +
               `content ${low.content}→${high.content} · glass ${low.glass}→${high.glass}`,
           )
         } catch (error) {
@@ -1802,7 +1811,6 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
 
     /** Token palette the translucency is mixed from, per theme. */
     const PALETTE = {
-      base: { light: '--dsw-static-neutral-bluish-00', dark: '--dsw-static-neutral-bluish-950' },
       sidebar: { light: '--dsw-static-neutral-bluish-50', dark: '--dsw-static-neutral-bluish-900' },
       layer1: { light: '--dsw-static-neutral-bluish-00', dark: '--dsw-static-neutral-bluish-875' },
       layer2: { light: '--dsw-static-neutral-bluish-00', dark: '--dsw-static-neutral-bluish-850' },
@@ -1891,7 +1899,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
      */
     function autoInkBase(themeKey) {
       const levels = surfaces()
-      const panels = [levels.base, levels.sidebar, levels.content, levels.glass]
+      const panels = [levels.sidebar, levels.content, levels.glass]
       const worst = (color) => {
         const ink = luminanceOf(color)
         return panels.reduce(
@@ -1906,12 +1914,35 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       return dark > light ? INK_BASE.dark : INK_BASE.light
     }
 
-    /** The colour in force: the user's pick in `custom`, the solved extreme otherwise. */
+    /**
+     * The colour in force: the user's pick in `custom`, the solved extreme
+     * otherwise.
+     *
+     * A pick that cannot clear 3:1 on any panel is not used — white on a light
+     * theme's 58% glass is 1.3:1, which reads as white text on white and is
+     * exactly what the "white film" complaint looked like. The window keeps
+     * working text and says so in the readout instead of trusting the pick.
+     */
     function inkBaseFor(themeKey) {
-      if (settings.inkMode === 'custom' && /^#[0-9a-fA-F]{6}$/.test(String(settings.inkColor))) {
-        return settings.inkColor
-      }
-      return autoInkBase(themeKey)
+      const solved = autoInkBase(themeKey)
+      if (settings.inkMode !== 'custom') return solved
+      const custom = String(settings.inkColor)
+      if (!/^#[0-9a-fA-F]{6}$/.test(custom)) return solved
+      const levels = surfaces()
+      const ink = luminanceOf(custom)
+      const worst = [levels.sidebar, levels.content, levels.glass].reduce(
+        (low, alpha) => Math.min(low, contrastOf(ink, effectiveLuminance(themeKey, alpha))),
+        99,
+      )
+      return worst >= 3 ? custom : solved
+    }
+
+    /** True when the user picked a colour this theme cannot carry. */
+    function inkFellBack(themeKey) {
+      if (settings.inkMode !== 'custom') return false
+      const custom = String(settings.inkColor)
+      if (!/^#[0-9a-fA-F]{6}$/.test(custom)) return false
+      return inkBaseFor(themeKey) !== custom
     }
 
     /**
@@ -1948,7 +1979,6 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       const base = inkBaseFor(themeKey)
       const ink = luminanceOf(base)
       const panels = [
-        ['base', levels.base],
         ['content', levels.content],
         ['sidebar', levels.sidebar],
         ['glass', levels.glass],
@@ -1977,6 +2007,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         tertiary: inkPaint(base, 2, basis.background),
         contrast: Math.round(contrastOf(luminanceOf(base), background) * 100) / 100,
         basis: basis.name,
+        fellBack: inkFellBack(themeKey),
         ladder: luminanceOf(base) < 0.5 ? 'dark' : 'light',
       }
     }
@@ -2044,11 +2075,16 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     }
 
     /**
-     * Fills derived from one strength knob, in tiers: chrome (frame + sidebar)
-     * stays thin so the wallpaper reads across the window, content surfaces
-     * (cards, code, bubbles) sit mid-glass, floating surfaces (inputs, pills,
-     * menus, sheets) are the most solid — all of them still show the wallpaper,
-     * because the columns behind them are blurred.
+     * Fills derived from one strength knob, in tiers: the window itself is never
+     * filled (the wallpaper would turn milky), the sidebar stays thin, content
+     * surfaces (cards, code, bubbles) sit mid-glass, floating surfaces (inputs,
+     * pills, menus, sheets) are the most solid — all of them still show the
+     * wallpaper, because the columns behind them are blurred.
+     *
+     * There is deliberately no `frame` tier: a constant fill over the whole
+     * window reads as a white film in a light theme, and the adaptive veil
+     * (`scrimAlpha`) already lifts the picture when it is too dark for black
+     * text.
      */
     function surfaces(strengthOverride) {
       const strength = clamp(
@@ -2057,11 +2093,9 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         100,
         DEFAULTS.surface,
       )
-      const base = clamp(Math.round(6 + strength * 0.2), 4, 30, 16)
       const layer1 = clamp(Math.round(6 + strength * 0.78), 10, 90, 47)
       const glass = clamp(Math.round(20 + strength * 0.74), 26, 96, 58)
       return {
-        base,
         sidebar: clamp(Math.round(10 + strength * 0.28), 8, 42, 25),
         layer1,
         layer2: clamp(Math.round(14 + strength * 0.78), 18, 94, 55),
@@ -2082,7 +2116,10 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       const fill = mix(PALETTE.layer1[themeKey], levels.glass)
       const lines = [
         `${selector} {`,
-        `  --dsw-alias-bg-base: ${mix(PALETTE.base[themeKey], levels.base)} !important;`,
+        // The window shell itself stays clear. A constant fill here was the
+        // white film a light theme showed over every wallpaper; the adaptive
+        // veil inside the wallpaper layer already handles dark pictures.
+        `  --dsw-alias-bg-base: rgba(0, 0, 0, 0) !important;`,
         `  --dsw-specific-sidebar-fill: ${mix(PALETTE.sidebar[themeKey], levels.sidebar)} !important;`,
         `  --dsw-alias-bg-layer-1: ${mix(PALETTE.layer1[themeKey], levels.layer1)} !important;`,
         `  --dsw-alias-bg-layer-2: ${mix(PALETTE.layer2[themeKey], levels.layer2)} !important;`,
@@ -2142,7 +2179,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         return
       }
       const levels = surfaces()
-      const chrome = Math.min(levels.base, levels.sidebar)
+      const chrome = levels.sidebar
       const inkBlock = (themeKey) => {
         // Both scopes carry the same specificity, so a light rule can never leak
         // into dark mode and vice versa: only one of them can match at a time.
@@ -3301,9 +3338,11 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
               className: 'dsh-we-preview-main',
               style: { background: fillOf(levels.content), backdropFilter: frostOf(blocks.main) },
             }),
+            // The bottom strip has no tint of its own in the real window
+            // (the shell is clear); only the composer pill is filled.
             h(
               'div',
-              { className: 'dsh-we-preview-bar', style: { background: fillOf(levels.base), backdropFilter: frostOf(blocks.bottom) } },
+              { className: 'dsh-we-preview-bar', style: { background: 'transparent', backdropFilter: frostOf(blocks.bottom) } },
               h('div', { className: 'dsh-we-preview-pill', style: { background: fillOf(levels.glass), backdropFilter: frostOf(Math.max(12, Number(settings.blurBottom) || 0)) } }),
             ),
           ),
@@ -3343,7 +3382,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           'div',
           { className: 'dsh-we-preview-meta' },
           h('span', { className: 'dsh-we-preview-tag' }, t('preview')),
-          h('span', null, `${t('surface')} ${levels.base} / ${levels.sidebar} / ${levels.glass}%`),
+          h('span', null, `${t('surface')} ${levels.sidebar} / ${levels.content} / ${levels.glass}%`),
           h('span', null, `${t('scrim')} ${Math.round(veil * 100)}%`),
           h('span', null, settings.zoom > 100 ? `${t('zoom')} ${settings.zoom}%` : t('framingZoomFirst')),
           item
@@ -3955,7 +3994,12 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
             display: `${settings.inkLevels}%`,
             onChange: (inkLevels) => updateSettings({ inkLevels }),
           }),
-          h('span', { className: 'dsh-we-hint' }, `${t('inkRatio')} ${inkSample.contrast}:1 · ${inkSample.base}`),
+          h(
+            'span',
+            { className: 'dsh-we-hint' },
+            `${t('inkRatio')} ${inkSample.contrast}:1 · ${inkSample.base}` +
+              (inkSample.fellBack ? ` · ${t('inkFallback')}` : ''),
+          ),
         ),
 
         h(
