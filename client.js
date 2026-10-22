@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b88'
+    const BUILD = 'b95'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -55,6 +55,9 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       posY: 0,
       muted: true,
       paused: false,
+      inkMode: 'auto',
+      inkColor: '#ffffff',
+      inkLevels: 62,
     }
 
     /**
@@ -83,6 +86,9 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       zoom: DEFAULTS.zoom,
       posX: DEFAULTS.posX,
       posY: DEFAULTS.posY,
+      inkMode: DEFAULTS.inkMode,
+      inkColor: DEFAULTS.inkColor,
+      inkLevels: DEFAULTS.inkLevels,
     }
 
     // ------------------------------------------------------------------
@@ -125,7 +131,14 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         openSidebarPanel: 'Open in the sidebar',
         back: 'Back',
         recentEmpty: 'Nothing here yet',
-                    scrim: 'Dim',
+        ink: 'Text colour',
+        inkHint: 'The whole window shares one colour; the tiers are that colour at lower opacity.',
+        inkAuto: 'Match wallpaper',
+        inkCustom: 'Pick',
+        inkOff: 'Theme default',
+        inkLevels: 'Tier contrast',
+        inkRatio: 'Contrast',
+        scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
         fitCover: 'Fill',
@@ -151,12 +164,23 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         video: 'Video',
         web: 'Web',
         local: 'Local',
+        image: 'Picture',
+        folder: 'Folder',
       recent: 'Recent',
         refresh: 'Rescan',
         scanning: 'Scanning…',
         empty: 'No wallpapers match this filter.',
         notInstalled: 'Wallpaper Engine was not found in any Steam library.',
-        notInstalledHint: 'Install it from Steam (app 431960) and open it once, then rescan.',
+        notInstalledHint: 'That is fine — you do not need it. The folder below is yours: drop pictures or videos in it and rescan.',
+        folderTitle: 'Your own wallpaper folder',
+        folderHint: 'No Wallpaper Engine needed. Put .jpg / .png / .gif / .webp pictures or .mp4 / .webm videos in this folder, then press Rescan.',
+        folderCount: '{count} files in this folder',
+        folderEmpty: 'This folder is empty right now.',
+        openFolder: 'Open folder',
+        copyPath: 'Copy path',
+        copied: 'Copied',
+        openFolderFailed: 'Could not open Explorer — copy the path and open it yourself.',
+        statusFolder: '{count} local wallpapers',
         scanningNow: 'Scanning the Steam libraries…',
         unreachable: 'The wallpaper host API is unreachable.',
         unreachableHint: 'Finish installing the plugin and reload this page, then rescan.',
@@ -211,7 +235,14 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         openSidebarPanel: '在侧栏打开',
         back: '返回',
         recentEmpty: '还没有用过壁纸',
-                    scrim: '压暗',
+        ink: '字体颜色',
+        inkHint: '整个窗口共用一个颜色，层级只是它的透明度，不再各块各调一种灰。',
+        inkAuto: '跟随壁纸',
+        inkCustom: '自定义',
+        inkOff: '主题默认',
+        inkLevels: '层级对比',
+        inkRatio: '对比度',
+        scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
         fitCover: '填充',
@@ -237,12 +268,23 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         video: '视频',
         web: '网页',
         local: '本地',
+        image: '图片',
+        folder: '文件夹',
       recent: '最近',
         refresh: '重新扫描',
         scanning: '扫描中…',
         empty: '没有符合条件的壁纸。',
         notInstalled: '没有在 Steam 库中找到 Wallpaper Engine。',
-        notInstalledHint: '在 Steam 中安装（应用 431960）并打开一次，然后重新扫描。',
+        notInstalledHint: '没装也没关系，不用装。下面这个文件夹就是给你用的：把图片或视频放进去，点「重新扫描」。',
+        folderTitle: '你自己的壁纸文件夹',
+        folderHint: '不需要 Wallpaper Engine。把 .jpg / .png / .gif / .webp 图片，或 .mp4 / .webm 视频放进这个文件夹，然后点「重新扫描」。',
+        folderCount: '这个文件夹里有 {count} 个文件',
+        folderEmpty: '这个文件夹现在还是空的。',
+        openFolder: '打开文件夹',
+        copyPath: '复制路径',
+        copied: '已复制',
+        openFolderFailed: '打不开资源管理器，请手动复制路径打开。',
+        statusFolder: '本地壁纸 {count} 张',
         scanningNow: '正在扫描 Steam 库…',
         unreachable: '无法连接壁纸主机接口。',
         unreachableHint: '确认插件已经安装完成，刷新页面后重试。',
@@ -463,6 +505,9 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       next.muted = next.muted !== false
       next.paused = next.paused === true
       next.pinned = next.pinned && typeof next.pinned === 'object' && typeof next.pinned.playFile === 'string' ? next.pinned : null
+      if (next.inkMode !== 'auto' && next.inkMode !== 'custom' && next.inkMode !== 'off') next.inkMode = DEFAULTS.inkMode
+      if (!/^#[0-9a-fA-F]{6}$/.test(String(next.inkColor))) next.inkColor = DEFAULTS.inkColor
+      next.inkLevels = clamp(Number(next.inkLevels), 0, 100, DEFAULTS.inkLevels)
       return next
     }
 
@@ -1091,6 +1136,91 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         add('theme.translucent', alphaOf(bodyBg) < 0.92, bodyBg)
         const ink = inkFor(effectiveLuminance('light', surfaces().layer1), 'light')
         add('theme.ink', Number(ink.contrast) >= 4.4, JSON.stringify(ink))
+
+        // The four surfaces the one ink colour has to survive.
+        const inkScopes = [
+          ['base', surfaces().base],
+          ['content', surfaces().content],
+          ['sidebar', surfaces().sidebar],
+          ['glass', surfaces().glass],
+        ]
+
+        // One colour, five scopes: the whole triad must match everywhere, or the
+        // window still shows several greys at once — the bug this replaced.
+        try {
+          const triads = inkScopes.map(([name, alpha]) => {
+            const row = inkFor(effectiveLuminance('light', alpha), 'light')
+            return `${name}:${row.primary}|${row.secondary}|${row.tertiary}`
+          })
+          const distinct = new Set(triads.map((row) => row.split(':')[1]))
+          add('ink.unified', distinct.size === 1, `scopes=${distinct.size} ${triads.join(' ')}`)
+        } catch (error) {
+          add('ink.unified', false, (error && error.message) || 'ink scopes failed')
+        }
+
+        // The tier knob must widen the gap (higher = more difference) and must
+        // not persist: preview-only writes, restored right after.
+        try {
+          const inkSnapshot = { inkMode: settings.inkMode, inkColor: settings.inkColor, inkLevels: settings.inkLevels }
+          const theme = 'light'
+          const background = () => effectiveLuminance(theme, surfaces().layer1)
+          previewSettings({ inkLevels: 0 })
+          const flat = inkFor(background(), theme)
+          previewSettings({ inkLevels: 100 })
+          const deep = inkFor(background(), theme)
+          const alphaOfInk = (paint) => {
+            const match = /rgba\([^)]*,\s*([\d.]+)\s*\)/.exec(String(paint))
+            return match ? Number(match[1]) : 1
+          }
+          const flatGap = 1 - alphaOfInk(flat.tertiary)
+          const deepGap = 1 - alphaOfInk(deep.tertiary)
+          add('ink.levels', flatGap < 0.05 && deepGap > flatGap + 0.12,
+            `flat=${flatGap.toFixed(2)} deep=${deepGap.toFixed(2)} ${deep.tertiary}`)
+          // A picked colour really is used, verbatim as the primary.
+          previewSettings({ inkMode: 'custom', inkColor: '#ffffff' })
+          const picked = inkFor(background(), theme)
+          add('ink.custom', picked.primary === '#ffffff' && picked.ladder === 'light',
+            `${picked.primary} ladder=${picked.ladder}`)
+          previewSettings(inkSnapshot)
+        } catch (error) {
+          add('ink.levels', false, (error && error.message) || 'ink levels failed')
+          add('ink.custom', false, (error && error.message) || 'ink custom failed')
+        }
+
+        // `off` must hand the label tokens back to the theme: no override in the
+        // generated sheet at all, not an override that happens to look the same.
+        try {
+          const snapshot = { inkMode: settings.inkMode }
+          previewSettings({ inkMode: 'off' })
+          const offSheet = styleRefs.paint ? styleRefs.paint.textContent : ''
+          previewSettings(snapshot)
+          const stillThere = /--dsw-alias-label-primary/.test(offSheet)
+          add('ink.off', !stillThere, `labelRules=${stillThere}`)
+        } catch (error) {
+          add('ink.off', false, (error && error.message) || 'ink off failed')
+        }
+
+        // Every scope the solved colour paints must clear the WCAG floor — or,
+        // where the wallpaper sits right at the readability crossover, at least
+        // be the better of the two extremes (nothing more is possible there).
+        try {
+          const theme = 'light'
+          const rows = inkScopes.map(([name, alpha]) => {
+            const background = effectiveLuminance(theme, alpha)
+            const auto = inkFor(background, theme)
+            const other = auto.base === INK_BASE.dark ? INK_BASE.light : INK_BASE.dark
+            const otherRatio = contrastOf(luminanceOf(other), background)
+            return { name, ratio: auto.contrast, otherRatio }
+          })
+          const ok = rows.every((row) => row.ratio >= 4.4 || row.ratio >= row.otherRatio)
+          add(
+            'ink.contrastFloor',
+            ok,
+            rows.map((row) => `${row.name}=${row.ratio.toFixed(2)}`).join(' '),
+          )
+        } catch (error) {
+          add('ink.contrastFloor', false, (error && error.message) || 'ink floor failed')
+        }
         add('theme.flag', computedFlag() === 'on', computedFlag())
         const titlebar = document.documentElement.getAttribute('data-windows-titlebar') !== null
         const radius = computedValue('[class*="centerCol"]', 'border-top-left-radius')
@@ -1319,6 +1449,23 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         }
       } catch (error) {
         add('preview.card', false, (error && error.message) || 'preview probe failed')
+      }
+      // The colour row must offer all three modes, keep exactly one active, and
+      // show a ratio: that is the whole control, so a missing button is a bug.
+      try {
+        const card = document.querySelector('[data-dsh-ink="card"]')
+        if (!card) {
+          add('ink.ui', true, 'settings closed')
+        } else {
+          const segs = card.querySelectorAll('.dsh-we-seg button').length
+          const active = card.querySelectorAll('.dsh-we-seg button[data-active="true"]').length
+          const sliders = card.querySelectorAll('input[type="range"]').length
+          const readout = /:1\b/.test(card.textContent || '')
+          add('ink.ui', segs === 3 && active === 1 && sliders === 1 && readout,
+            `segs=${segs} active=${active} sliders=${sliders} readout=${readout}`)
+        }
+      } catch (error) {
+        add('ink.ui', false, (error && error.message) || 'ink ui probe failed')
       }
       // One wallpaper means one picture: a second media node or a blurred copy
       // behind it is exactly what made the preview look like two wallpapers.
@@ -1690,14 +1837,13 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const TINT = { light: 0.97, dark: 0.05 }
 
     /**
-     * Grayscale ink ladders. The plugin prefers plain black / white / grey and
-     * only walks a ladder when a rung's contrast is too low for its role, which
-     * is what "先从黑白灰出发，看不清再用别的" means in practice.
+     * Grayscale ink. Plain black / white / grey first — the window resolves ONE
+     * base colour per theme, and every tier is that same colour at a lower
+     * opacity, so the sidebar can never come out a different grey than the
+     * reading column. A tier only steps back toward the base when its own
+     * surface would starve it of contrast.
      */
-    const INK_LADDER = {
-      dark: ['#0b0d11', '#3a3f4a', '#5d6370', '#838a97'],
-      light: ['#f8f9fb', '#ccd1da', '#a4aab6', '#7f8693'],
-    }
+    const INK_BASE = { dark: '#0b0d11', light: '#f8f9fb' }
 
     /** Relative luminance of a `#rrggbb` colour. */
     function luminanceOf(color) {
@@ -1707,6 +1853,12 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
       })
       return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    }
+
+    /** `#rrggbb` → `[r, g, b]`. */
+    function channelsOf(color) {
+      const value = String(color).replace('#', '')
+      return [0, 2, 4].map((offset) => parseInt(value.slice(offset, offset + 2), 16))
     }
 
     /** WCAG contrast ratio between two relative luminances. */
@@ -1731,38 +1883,108 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     }
 
     /**
-     * Solve an ink triad for one composed background. The theme's own direction
-     * wins while it clears 4.5:1; past that the opposite ladder takes over, so a
-     * light theme over a night scene flips to light ink by itself. Each rung
-     * steps back toward the primary until it clears its own floor.
+     * The base colour one theme paints with. `custom` uses the user's colour
+     * verbatim; `auto` (and `off`, which still needs a colour for diagnostics)
+     * picks whichever of black / white survives the worst panel — the sidebar,
+     * the reading column, a card and the glass input are all scored, so the one
+     * colour has to work on all of them, not just on the one it was solved for.
+     */
+    function autoInkBase(themeKey) {
+      const levels = surfaces()
+      const panels = [levels.base, levels.sidebar, levels.content, levels.glass]
+      const worst = (color) => {
+        const ink = luminanceOf(color)
+        return panels.reduce(
+          (low, panel) => Math.min(low, contrastOf(ink, effectiveLuminance(themeKey, panel))),
+          99,
+        )
+      }
+      const dark = worst(INK_BASE.dark)
+      const light = worst(INK_BASE.light)
+      // A tie keeps the theme's own direction; otherwise the surviving extreme wins.
+      if (Math.abs(dark - light) < 0.05) return INK_BASE[themeKey === 'dark' ? 'light' : 'dark']
+      return dark > light ? INK_BASE.dark : INK_BASE.light
+    }
+
+    /** The colour in force: the user's pick in `custom`, the solved extreme otherwise. */
+    function inkBaseFor(themeKey) {
+      if (settings.inkMode === 'custom' && /^#[0-9a-fA-F]{6}$/.test(String(settings.inkColor))) {
+        return settings.inkColor
+      }
+      return autoInkBase(themeKey)
+    }
+
+    /**
+     * Opacity one tier keeps on one surface. The knob sets the gap between the
+     * tiers; the contrast floor then pulls a tier back toward the base when its
+     * own surface would otherwise make it unreadable. Same colour, same formula,
+     * everywhere — that is what "统一" means here.
+     */
+    function inkOpacity(tier, background, baseLuminance) {
+      const gap = clamp(Number(settings.inkLevels), 0, 100, 62) / 100
+      const wanted = tier === 0 ? 1 : tier === 1 ? 1 - gap * 0.42 : 1 - gap * 0.68
+      const floor = tier === 2 ? 3 : 4.5
+      for (let pct = wanted; pct < 1; pct += 0.04) {
+        if (contrastOf(background + (baseLuminance - background) * pct, background) >= floor) return pct
+      }
+      return 1
+    }
+
+    /** One tier of one colour as CSS: an opaque hex at full strength, `rgba` below it. */
+    function inkPaint(base, tier, background) {
+      const pct = inkOpacity(tier, background, luminanceOf(base))
+      if (pct >= 0.995) return base
+      const [r, g, b] = channelsOf(base)
+      return `rgba(${r}, ${g}, ${b}, ${Math.round(pct * 100) / 100})`
+    }
+
+    /**
+     * The panel that makes the ink work hardest: lowest contrast there decides
+     * the tier alphas for every panel. Solving per panel would give the sidebar
+     * a different grey than the reading column again — one basis, every scope.
+     */
+    function inkBasis(themeKey) {
+      const levels = surfaces()
+      const base = inkBaseFor(themeKey)
+      const ink = luminanceOf(base)
+      const panels = [
+        ['base', levels.base],
+        ['content', levels.content],
+        ['sidebar', levels.sidebar],
+        ['glass', levels.glass],
+      ]
+      let worst = null
+      for (const [name, alpha] of panels) {
+        const background = effectiveLuminance(themeKey, alpha)
+        const ratio = contrastOf(ink, background)
+        if (!worst || ratio < worst.ratio) worst = { name, alpha, background, ratio }
+      }
+      return { ...worst, base }
+    }
+
+    /**
+     * The triad for one composed background. The colours come from the shared
+     * basis (so all scopes are identical); `contrast` still reports the ratio
+     * this particular background gets, which is what the panel displays.
      */
     function inkFor(background, themeKey) {
-      const score = (ladder) =>
-        ladder.map((color) => ({ color, ratio: contrastOf(background, luminanceOf(color)) }))
-      const dark = score(INK_LADDER.dark)
-      const light = score(INK_LADDER.light)
-      const natural = themeKey === 'dark' ? light : dark
-      const opposite = themeKey === 'dark' ? dark : light
-      const rungs =
-        natural[0].ratio >= 4.5 || natural[0].ratio >= opposite[0].ratio ? natural : opposite
-      const pick = (index, floor) => {
-        for (let cursor = index; cursor >= 0; cursor -= 1) {
-          if (rungs[cursor].ratio >= floor) return rungs[cursor]
-        }
-        return rungs[0]
-      }
-      const primary = pick(0, 4.5)
+      const basis = inkBasis(themeKey)
+      const base = basis.base
       return {
-        primary: primary.color,
-        secondary: pick(1, 4.5).color,
-        tertiary: pick(2, 3).color,
-        contrast: Math.round(primary.ratio * 100) / 100,
-        ladder: rungs === dark ? 'dark' : 'light',
+        base,
+        primary: inkPaint(base, 0, basis.background),
+        secondary: inkPaint(base, 1, basis.background),
+        tertiary: inkPaint(base, 2, basis.background),
+        contrast: Math.round(contrastOf(luminanceOf(base), background) * 100) / 100,
+        basis: basis.name,
+        ladder: luminanceOf(base) < 0.5 ? 'dark' : 'light',
       }
     }
 
     /** The ink override block for one surface (defaults override the theme). */
     function inkRule(selector, themeKey, alphaPercent) {
+      // `off` leaves the theme's own ink alone; nothing to override.
+      if (settings.inkMode === 'off') return ''
       const ink = inkFor(effectiveLuminance(themeKey, alphaPercent), themeKey)
       return [
         `${selector} {`,
@@ -2200,6 +2422,11 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
   color: var(--dsw-alias-label-primary); backdrop-filter: blur(12px) saturate(1.1);
   box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 .dsh-we-chiprow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dsh-we-swatch { width: 24px; height: 24px; padding: 0; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--dsw-alias-border-l2); }
+.dsh-we-swatch[data-active="true"] { box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
+.dsh-we-color { width: 34px; height: 24px; padding: 0; border-radius: 7px; cursor: pointer; background: none;
+  border: 1px solid var(--dsw-alias-border-l2); }
 .dsh-we-chip { border: 1px solid var(--dsw-alias-border-l1); background: none; color: var(--dsw-alias-label-secondary);
   font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
 .dsh-we-chip[data-active="true"] { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); }
@@ -2658,6 +2885,91 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       )
     }
 
+    /**
+     * The drop-in folder: the fallback that makes the plugin usable with no
+     * Wallpaper Engine at all. The path is shown verbatim (selectable) because
+     * "find the Steam library yourself" was the whole failure mode before.
+     */
+    function FolderCard({ folder, compact, onRescan }) {
+      const [copied, setCopied] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [failed, setFailed] = useState(false)
+      const dir = (folder && folder.path) || ''
+      const count = Number(folder && folder.count) || 0
+      const copy = async () => {
+        try {
+          await navigator.clipboard.writeText(dir)
+          setCopied(true)
+          window.setTimeout(() => setCopied(false), 1600)
+        } catch {
+          setCopied(false)
+        }
+      }
+      const open = async () => {
+        if (busy) return
+        setBusy(true)
+        try {
+          await callHost('openFolder', {})
+          setFailed(false)
+        } catch {
+          // The path is still selectable, so the user is never stuck.
+          setFailed(true)
+        }
+        setBusy(false)
+      }
+      if (dir === '') return null
+      const pathStyle = {
+        marginTop: '6px',
+        padding: '6px 8px',
+        borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: '11px',
+        lineHeight: '1.5',
+        wordBreak: 'break-all',
+        userSelect: 'text',
+        color: 'var(--dsw-alias-label-primary)',
+      }
+      const buttonStyle = { marginRight: '6px', marginTop: '8px' }
+      return h(
+        'div',
+        { className: 'dsh-we-card' },
+        h(
+          'div',
+          { className: 'dsh-we-row' },
+          h('span', { className: 'dsh-we-title', style: { fontSize: '13px' } }, t('folderTitle')),
+        ),
+        compact ? null : h('div', { className: 'dsh-we-row-hint' }, t('folderHint')),
+        h('div', { style: pathStyle, title: dir }, dir),
+        h(
+          'div',
+          null,
+          h(
+            'button',
+            { type: 'button', className: 'dsh-we-btn', style: buttonStyle, disabled: busy, onClick: open },
+            t('openFolder'),
+          ),
+          h('button', { type: 'button', className: 'dsh-we-btn', style: buttonStyle, onClick: copy }, copied ? t('copied') : t('copyPath')),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-we-btn',
+              style: buttonStyle,
+              disabled: data.loading,
+              onClick: () => {
+                if (typeof onRescan === 'function') onRescan()
+              },
+            },
+            data.loading ? t('scanning') : t('refresh'),
+          ),
+        ),
+        h('div', { className: 'dsh-we-row-hint', style: { marginTop: '6px' } }, count ? fmt(t('folderCount'), { count }) : t('folderEmpty')),
+        failed ? h('div', { className: 'dsh-we-row-hint', style: { marginTop: '4px' } }, t('openFolderFailed')) : null,
+      )
+    }
+
     /** Human label for a media shape: 16:9, 1:1, 9:16, or the pixel size. */
     function ratioLabel(width, height) {
       if (!width || !height) return ''
@@ -2684,7 +2996,21 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     function Tile({ item, selected, active, onPick, used }) {
       const [ratio, setRatio] = useState('')
       const thumbUrl = item.preview ? mediaUrl(item.preview) : ''
-      const badge = item.source === 'local' ? t('local') : item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene')
+      // A video in the drop-in folder has no preview file; its first frame is
+      // the next best thumbnail, so the tile is not an empty box.
+      const videoThumbUrl = thumbUrl === '' && item.playKind === 'video' ? mediaUrl(item.playFile) : ''
+      const kindLabel = item.source === 'folder'
+        ? t('folder')
+        : item.source === 'local'
+          ? t('local')
+          : item.kind === 'video'
+            ? t('video')
+            : item.kind === 'web'
+              ? t('web')
+              : item.kind === 'image'
+                ? t('image')
+                : t('scene')
+      const badge = kindLabel
       return h(
         'button',
         {
@@ -2708,7 +3034,18 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
                   setRatio(ratioLabel(node.naturalWidth, node.naturalHeight))
                 },
               })
-            : h('div', { className: 'dsh-we-thumb-empty' }, t('previewMissing')),
+            : videoThumbUrl
+              ? h('video', {
+                  src: videoThumbUrl,
+                  muted: true,
+                  preload: 'metadata',
+                  playsInline: true,
+                  onLoadedMetadata: (event) => {
+                    const node = event.currentTarget
+                    setRatio(ratioLabel(node.videoWidth, node.videoHeight))
+                  },
+                })
+              : h('div', { className: 'dsh-we-thumb-empty' }, t('previewMissing')),
           h('span', { className: 'dsh-we-badge' }, badge),
           ratio ? h('span', { className: 'dsh-we-tile-ratio' }, ratio) : null,
           active ? h('span', { className: 'dsh-we-active-dot', title: t('activeNow') }) : null,
@@ -2720,7 +3057,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           h(
             'span',
             { className: 'dsh-we-tile-meta' },
-            item.source === 'local' ? t('local') : item.kind === 'video' ? t('video') : item.kind === 'web' ? t('web') : t('scene'),
+            kindLabel,
             used && used > 1 ? ` · \u00d7${used}` : '',
           ),
         ),
@@ -3009,7 +3346,13 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           h('span', null, `${t('surface')} ${levels.base} / ${levels.sidebar} / ${levels.glass}%`),
           h('span', null, `${t('scrim')} ${Math.round(veil * 100)}%`),
           h('span', null, settings.zoom > 100 ? `${t('zoom')} ${settings.zoom}%` : t('framingZoomFirst')),
-          item ? h('span', null, item.kind === 'video' ? t('video') : t('scene')) : null,
+          item
+            ? h(
+                'span',
+                null,
+                item.kind === 'video' ? t('video') : item.kind === 'image' ? t('image') : t('scene'),
+              )
+            : null,
         ),
       )
     }
@@ -3141,6 +3484,9 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     }
 
     /** The settings page. */
+    /** Plain greys offered next to the colour picker: white, light grey, ink. */
+    const INK_SWATCHES = ['#ffffff', '#e6e9ee', '#0b0d11']
+
     function WallpaperSettings(props) {
       const compact = Boolean(props && props.compact)
       const [query, setQuery] = useState('')
@@ -3167,6 +3513,21 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
       const localCount = items.filter((item) => item.source === 'local').length
       const recentCount = items.filter((item) => usage[item.id]).length
       const countFor = (key) => (key === 'local' ? localCount : key === 'recent' ? recentCount : counts[key] || 0)
+      // The drop-in folder is the fallback when Wallpaper Engine is absent, so
+      // it is read from state (cheap) and the library (authoritative count).
+      const folder = (library && library.folder) || (state && state.folder) || null
+      const folderCount = Number(folder && folder.count) || 0
+      const usable = installed || folderCount > 0
+      // The ink row reports the ratio the reading column actually shows, so the
+      // number in the panel is the number the window gets.
+      const inkTheme = (() => {
+        try {
+          return document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'
+        } catch {
+          return 'light'
+        }
+      })()
+      const inkSample = inkFor(effectiveLuminance(inkTheme, surfaces().layer1), inkTheme)
 
       const visible = useMemo(() => {
         const needle = query.trim().toLowerCase()
@@ -3186,7 +3547,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         updateSettings({ enabled: true, mode: 'pin', pinned: item })
       }
 
-      const statusTone = data.error ? 'error' : installed ? 'ok' : 'warn'
+      const statusTone = data.error ? 'error' : usable ? 'ok' : 'warn'
       const scannedAt = library && library.scannedAt ? new Date(library.scannedAt) : null
       const scannedLabel = scannedAt
         ? fmt(t('statusScanned'), { time: scannedAt.toLocaleTimeString(dict() === STRINGS.zh ? 'zh-CN' : 'en-US') })
@@ -3223,7 +3584,17 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
             'div',
             { className: 'dsh-we-status' },
             h('span', { className: 'dsh-we-status-dot', 'data-tone': statusTone }),
-            h('span', null, data.error ? data.error : installed ? fmt(t('statusReady'), { count: counts.all || items.length }) : t('notInstalled')),
+            h(
+              'span',
+              null,
+              data.error
+                ? data.error
+                : installed
+                  ? fmt(t('statusReady'), { count: counts.all || items.length })
+                  : folderCount > 0
+                    ? fmt(t('statusFolder'), { count: folderCount })
+                    : t('notInstalled'),
+            ),
             scannedLabel ? h('span', null, `· ${scannedLabel}`) : null,
           ),
           data.error
@@ -3246,7 +3617,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
                 ),
               )
             : null,
-          installed && !data.error
+          usable && !data.error
             ? h(NowCard, {
                 item: displayItem,
                 subtitle: following
@@ -3258,7 +3629,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
                     : t('modePin'),
               })
             : null,
-          !installed
+          !installed && folderCount === 0
             ? h(
                 'div',
                 { className: 'dsh-we-error' },
@@ -3267,6 +3638,19 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
               )
             : null,
         ),
+
+        // Always present: with no Wallpaper Engine this card IS the feature, and
+        // even with it installed a personal folder is the easiest way in.
+        data.error
+          ? null
+          : h(FolderCard, {
+              folder,
+              compact,
+              onRescan: () => {
+                invalidateSelection()
+                loadLibrary(true)
+              },
+            }),
 
         h(
           'div',
@@ -3518,6 +3902,64 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
 
         h(
           'div',
+          { className: 'dsh-we-card', 'data-dsh-ink': 'card' },
+          h(Row, { name: t('ink'), hint: t('inkHint') }),
+          h(
+            'div',
+            { className: 'dsh-we-seg', style: { alignSelf: 'flex-start' } },
+            h(
+              'button',
+              { type: 'button', 'data-active': settings.inkMode === 'auto' ? 'true' : 'false', onClick: () => updateSettings({ inkMode: 'auto' }) },
+              t('inkAuto'),
+            ),
+            h(
+              'button',
+              { type: 'button', 'data-active': settings.inkMode === 'custom' ? 'true' : 'false', onClick: () => updateSettings({ inkMode: 'custom' }) },
+              t('inkCustom'),
+            ),
+            h(
+              'button',
+              { type: 'button', 'data-active': settings.inkMode === 'off' ? 'true' : 'false', onClick: () => updateSettings({ inkMode: 'off' }) },
+              t('inkOff'),
+            ),
+          ),
+          settings.inkMode === 'custom'
+            ? h(
+                'div',
+                { className: 'dsh-we-chiprow' },
+                INK_SWATCHES.map((color) =>
+                  h('button', {
+                    key: color,
+                    type: 'button',
+                    className: 'dsh-we-swatch',
+                    style: { background: color },
+                    'data-active': String(settings.inkColor).toLowerCase() === color ? 'true' : 'false',
+                    'aria-label': color,
+                    onClick: () => updateSettings({ inkColor: color }),
+                  }),
+                ),
+                h('input', {
+                  type: 'color',
+                  className: 'dsh-we-color',
+                  value: settings.inkColor,
+                  onChange: (event) => updateSettings({ inkColor: event.target.value }),
+                }),
+              )
+            : null,
+          h(Slider, {
+            label: t('inkLevels'),
+            value: settings.inkLevels,
+            min: 0,
+            max: 100,
+            step: 1,
+            display: `${settings.inkLevels}%`,
+            onChange: (inkLevels) => updateSettings({ inkLevels }),
+          }),
+          h('span', { className: 'dsh-we-hint' }, `${t('inkRatio')} ${inkSample.contrast}:1 · ${inkSample.base}`),
+        ),
+
+        h(
+          'div',
           { className: 'dsh-we-card' },
           h(Row, { name: t('blockBlur'), hint: t('blockBlurHint') }),
           h(
@@ -3595,7 +4037,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
                 onChange: (event) => setQuery(event.target.value),
               }),
             ),
-            ...['all', 'recent', 'scene', 'video', 'web', 'local'].map((key) =>
+            ...['all', 'recent', 'scene', 'video', 'web', 'image', 'local'].map((key) =>
               h(
                 'button',
                 {
@@ -3612,7 +4054,11 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           data.loading && items.length === 0
             ? h('div', { className: 'dsh-we-empty' }, t('scanningNow'))
             : visible.length === 0
-              ? h('div', { className: 'dsh-we-empty' }, installed ? t('empty') : t('notInstalled'))
+              ? h(
+                  'div',
+                  { className: 'dsh-we-empty' },
+                  items.length === 0 ? `${t('folderEmpty')} ${t('folderHint')}` : t('empty'),
+                )
               : h(
                   'div',
                   { className: 'dsh-we-gallery' },

@@ -4,6 +4,9 @@
 当前激活的壁纸（以及整个创意工坊壁纸库），在 Harness Web UI 背后绘制一层壁纸，并把界面调成
 半透明，让壁纸透出来。
 
+**没装 Wallpaper Engine 也能用**：插件会自动建一个投放文件夹，把图片或视频丢进去就是壁纸，
+不依赖 Steam、不依赖创意工坊，也不需要任何额外配置。
+
 - 只读：插件**从不修改** Wallpaper Engine 的配置，只读取 `config.json` 与创意工坊目录。
 - 支持 `scene` / `video` / `web` / `application` 四类壁纸；视频壁纸会真的播放（可静音/暂停）。
 - 两种模式：**跟随**（用 Wallpaper Engine 里当前激活的那张，支持多显示器）或**固定**（从壁纸库里挑一张）。
@@ -11,14 +14,42 @@
 ## 安装
 
 ```powershell
-# 装到当前 profile（从 GitHub 安装）
-dsh plugin add github:SharpWord/dsh-wallpaper-engine
+# 装到桌面版 profile（从 GitHub 安装）
+dsh plugin --profile desktop add github:SharpWord/dsh-wallpaper-engine
+
+# 或从本地打包文件装
+dsh plugin --profile desktop add "C:\path\to\dsh-wallpaper-engine-1.1.0.tgz"
 
 # 或从本地目录装（开发时）
 plugin_manager install_bundle target=<插件目录的绝对路径>
 ```
 
 安装后重启（或刷新）Harness Web UI，打开 **设置 → 壁纸**。
+
+## 没装 Wallpaper Engine 也能用（投放文件夹）
+
+插件启动时会把下面这个文件夹建好（已经存在就什么都不动），路径在设置页「壁纸」顶部原样显示，
+旁边有「打开文件夹 / 复制路径 / 重新扫描」三个按钮：
+
+```
+%USERPROFILE%\Pictures\dsh-wallpapers      # 例如 C:\Users\你\Pictures\dsh-wallpapers
+```
+
+- 把图片（`.jpg .jpeg .png .gif .webp .bmp .avif`）或视频（`.mp4 .m4v .webm .mov .ogv .mkv .avi`）
+  放进去，回到设置页点「重新扫描」即可出现在壁纸库里，标记为「本地文件夹」。
+- 只扫这一层，不递归子文件夹；文件夹首次创建时会写入一份 `README.txt` 说明同样的事。
+- 你原来的壁纸文件不会被移动或改动，插件只读取。
+- 文件夹同时被加入 `/media` 的读取白名单，所以页面能直接播放里面的视频。
+- 不想要了：清空文件夹即可，插件不会自己删东西。
+
+Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列出创意工坊壁纸和投放文件夹里的壁纸。
+
+路径细节：
+
+- 位置跟随系统真正的「图片」文件夹（`HKCU\...\Explorer\User Shell Folders\My Pictures`），
+  所以 Pictures 被 OneDrive「已知文件夹移动」搬走过也认得，不会在 `%USERPROFILE%` 下另建一个空文件夹。
+- 想换地方：设环境变量 `DSH_WALLPAPER_FOLDER=<目录绝对路径>`，插件就改用那个目录当投放文件夹。
+- 设置页显示的永远是解析后的真实路径，不是猜的。
 
 ## 它读了什么（隐私）
 
@@ -27,11 +58,12 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 | Steam 路径（注册表 `HKCU\Software\Valve\Steam\SteamPath`、`libraryfolders.vdf`） | 定位 Wallpaper Engine 安装目录 |
 | `<WE>/config.json` | 当前每台显示器激活的壁纸、播放设置 |
 | `<WE>/projects`、创意工坊 `content/431960` | 壁纸库列表 |
+| `%USERPROFILE%\Pictures\dsh-wallpapers` | 投放文件夹：没有 Wallpaper Engine 时的壁纸来源（只读，除首次创建文件夹与 `README.txt`） |
 | 当前 Windows 账户名（`os.userInfo().username`） | **只**用来定位 `config.json` 里属于你那个用户的那一段 |
 
 除此之外不读任何个人文件、不写 Wallpaper Engine 的配置、不发任何遥测或网络请求；
 壁纸文件通过本机回环地址（`127.0.0.1` 上的 Harness 端口）以 `Range` 流式返回给页面，
-且只允许 Wallpaper Engine 安装目录与创意工坊根目录内的路径。
+且只允许 Wallpaper Engine 安装目录、创意工坊根目录与投放文件夹内的路径。
 `POST /state` 会返回渲染器的自检数据（构建号、计算后的颜色、壁纸亮度等），只留在本机内存里。
 
 ## 界面
@@ -195,24 +227,36 @@ diff / 文件改动卡片（`[data-changed-files]`）和它的悬停预览（`[d
 并通过 `--dsh-we-sheet` 下发（浅色 `bluish-00` / 深色 `bluish-850`）。
 模糊把那层正文糊成一块色雾，所以既有壁纸质感，也不会再出现两层字。
 
-### 文字颜色跟着壁纸自动走
+### 字体颜色（一个颜色，三个层级）
 
-不用手调：壁纸加载后量一次平均亮度，再按每个面各自的填充不透明度算出
-「填充压在壁纸上」的合成亮度 `L = a × tint + (1 − a) × L_wallpaper`，然后在**黑白灰阶梯**里解对比度。
+设置里的「字体颜色」一行控制整个窗口的字色，三档可选：
 
-| 面 | 合成用的填充 | 说明 |
-| --- | --- | --- |
-| 内容（正文、卡片） | `bg-layer-1` | 默认 47% |
-| 外框（侧栏、底栏） | `bg-base` / sidebar 取更薄的那个 | 默认 16% |
-| 浮层（输入框、胶囊、对话框、设置面板） | `--dsh-we-glass` | 默认 58% |
+| 模式 | 行为 |
+| --- | --- |
+| 跟随壁纸（默认） | 量壁纸平均亮度，在**纯黑**和**纯白**之间挑一个 —— 挑的是「在四种面上都还能看」的那个，不是只在正文上能看的那个 |
+| 自定义 | 用你选的颜色，预设白/浅灰/墨黑三颗，也可以开取色器选任意颜色 |
+| 主题默认 | 完全不动字色，交回 Harness 自己的 token |
 
-求解规则：
-- 两套阶梯（深字 `#0b0d11 #3a3f4a #5d6370 #838a97` / 浅字 `#f8f9fb #ccd1da #a4aab6 #7f8693`），
-  先选主题本来那套；只有当它达不到 4.5:1 时，才切到另一套 —— 所以浅色主题压深色壁纸会自动变浅字。
-- 一级文字目标 4.5:1、二级 4.5:1、三级 3:1，达不到就往回退到更极端的那一级。
-- 全部是灰度：这是「先用黑白灰，看不清再说」的实现方式；实测这套阶梯在本机整个壁纸库上都过 4.5:1，
-  所以彩色兜底没有触发过（真要兜底时会退到纯黑/纯白，仍然不是彩色）。
-- 覆盖的 token：`--dsw-alias-label-primary/secondary/tertiary/caption/quaternary`。
+关键点：**整个窗口只有一种基色**。以前是每个面各自解一套阶梯，侧栏、正文、输入框会解出三种不同的灰，
+同一屏看起来像三种主题。现在只解一次基色，三个层级都是这个颜色降透明度，所以不会再各块各调。
+
+层级怎么分：`inkLevels`（层级对比，0–100，默认 62）决定二级、三级相对一级保留多少不透明度 ——
+0 是三档完全一样，100 是三级最淡。透明度设好之后还有 4.5:1 / 3:1 的对比度地板：
+某个层级在某个面上真看不清时，它只把**这一档**往回调，颜色和色相不变。
+
+```
+基色 = autoInkBase(主题)          // 纯黑 / 纯白，取在两个极端里「最差面」更高的那个
+层级 = inkOpacity(档位, 面亮度, 基色亮度)   // 先按 inkLevels 给透明度，再按地板回调
+落地 = inkPaint(基色, 档位, 面亮度)        // 满强度给 hex，否则给 rgba
+```
+
+层级透明度统一在**最难的那个面**（对比度最低的那个）上解一次，四个面共用同一组值 ——
+这样侧栏和正文的二级文字是同一个灰，同时每一面都还在自己的地板之上。
+覆盖的 token：`--dsw-alias-label-primary/secondary/tertiary/caption/quaternary`。
+
+自测里的 `ink.unified`（四个面解出来的三级色必须完全相同）、`ink.levels`（滑块真能拉开层级）、
+`ink.custom`（选的白就是白）、`ink.contrastFloor`（每个面都过地板）、`ink.ui`（三个按钮一个不少）
+`ink.off`（选「主题默认」时一条覆盖规则都不生成）就是这行的回归保护。设置里那一行会实时显示当前对比度，例如 `对比度 13.22:1 · #0b0d11`。
 
 
 ### 隐藏「预览版」
@@ -283,7 +327,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（42 项）
+### 自测（49 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -295,7 +339,8 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 
 覆盖：Host 三条接口、壁纸层与媒体是否真的加载（`<video readyState=4>`）、主题半透明与文字反差、
 标题栏方角、徽标隐藏、分块模糊、侧栏「无包含块 / 收起 / 收起后按钮可点 / 再展开」、开关关掉后主题回滚为不透明、
-深色主题的自动配字（纯算术，不再临时切换页面主题）、浓度与分块模糊两个旋钮是否真的改变生成规则、
+深色主题的自动配字（纯算术，不再临时切换页面主题）、字体颜色六项（`ink.unified` / `ink.levels` /
+`ink.custom` / `ink.off` / `ink.contrastFloor` / `ink.ui`）、浓度与分块模糊两个旋钮是否真的改变生成规则、
 壁纸库排序规则（`library.usageOrder`，合成数据）、五种显示方式（`fit.modes`）、缩放与取景的上下限
 （`frame.clamps`）及「设置值 = 实际生效值」（`frame.applied`）、`Range` 206 流式取字节、页面运行时错误。
 
@@ -326,36 +371,43 @@ Windows 标题栏布局下，布局样式会给主区左上角加 16px 圆角（
 
 | 方法 | 请求 | 返回 |
 | --- | --- | --- |
-| `POST /state` | `{}` | 安装状态、当前每台显示器激活的壁纸、计数、最近请求、渲染器自检 |
-| `POST /library` | `{"refresh":true}` | 全部壁纸（创意工坊 + 本地项目） |
+| `POST /state` | `{}` | 安装状态、当前每台显示器激活的壁纸、计数、投放文件夹、最近请求、渲染器自检 |
+| `POST /library` | `{"refresh":true}` | 全部壁纸（创意工坊 + 本地项目 + 投放文件夹） |
 | `POST /refresh` | `{}` | 丢弃缓存后重扫 |
+| `POST /folder` | `{}` | 确保投放文件夹存在并重扫，返回 `{path, created, writable, count, installed, items}` |
+| `POST /openFolder` | `{}` | 在资源管理器里打开投放文件夹 |
 | `POST /report` | 渲染器自检 | `{"received":true}` |
 | `POST /ping` | `{}` | 当前自测 token（页面每 5 秒轮询） |
 | `POST /verify` | `{}` | 下发新自测 token |
 | `GET /media?p=<绝对路径>` | 可选 `Range` | 文件流，支持 `206 Partial Content` |
 
-`/media` 只允许 Wallpaper Engine 安装目录与创意工坊根目录里的文件（`realpath` + 相对路径校验），
+`/media` 只允许 Wallpaper Engine 安装目录、创意工坊根目录与投放文件夹里的文件（`realpath` + 相对路径校验），
 防止越权读取任意路径。
 
 ## 发现逻辑（`discovery.js`）
 
-1. Steam 根目录：`STEAM_PATH` 环境变量 → `HKCU\Software\Valve\Steam\SteamPath` → `HKLM\...\WOW6432Node` → 常见盘符。
-2. 库目录：`steamapps/libraryfolders.vdf`。
-3. Wallpaper Engine：各库里 `steamapps/common/wallpaper_engine`，需要一个可读的 `config.json`。
-4. 当前壁纸：`config.json` → 当前 Windows 用户段 → `general.wallpaperconfig.selectedwallpapers.MonitorN.file`。
-5. 壁纸条目：创意工坊 `content/431960/<id>/project.json`（+ 本地 `projects/myprojects`）。
-6. 配置里的 `scene.pkg` 与项目里的 `scene.json` 名字不一致，所以按「主文件 → 目录 → 创意工坊 id」三级回退匹配。
+1. 投放文件夹：`%USERPROFILE%\Pictures\dsh-wallpapers`，不存在就创建（不需要 Wallpaper Engine）。
+2. Steam 根目录：`STEAM_PATH` 环境变量 → `HKCU\Software\Valve\Steam\SteamPath` → `HKLM\...\WOW6432Node` → 常见盘符。
+3. 库目录：`steamapps/libraryfolders.vdf`。
+4. Wallpaper Engine：各库里 `steamapps/common/wallpaper_engine`，需要一个可读的 `config.json`；找不到只记一条 warning，不影响文件夹里的壁纸。
+5. 当前壁纸：`config.json` → 当前 Windows 用户段 → `general.wallpaperconfig.selectedwallpapers.MonitorN.file`。
+6. 壁纸条目：创意工坊 `content/431960/<id>/project.json`（+ 本地 `projects/myprojects` + 投放文件夹这一层）。
+7. 配置里的 `scene.pkg` 与项目里的 `scene.json` 名字不一致，所以按「主文件 → 目录 → 创意工坊 id」三级回退匹配。
 
 ## 渲染
 
 - `scene` / `web` / `application` 用 `project.json` 里的预览图（`preview.gif` 会动）。
 - `video` 用真实视频文件，`<video muted loop autoplay playsinline>`。
+- `image`（投放文件夹里的图片）直接当壁纸，`object-fit` 同样跟随摆法设置。
 - 一个媒体元素：`object-fit` 由 `placement()` 决定，缩放/取景由 `framing()` 算出的
   `width/height/left/top` 百分比决定；默认不模糊壁纸本身（`blur: 0`），清晰度交给分块模糊。
 - 需要时再叠一层遮罩（只在极端亮度时非 0）。没有别的装饰层。
 - 遮罩/配字都在壁纸 `onLoad` / `onLoadedData` 里量一次后重算，换壁纸自动重算。
 
 ## 排障
+
+没装 Wallpaper Engine 是正常用法，不算故障：设置页状态会显示「用本地文件夹」并给出路径。
+只有当「既没装 Wallpaper Engine、投放文件夹也是空的」时才会提示安装或放图。
 
 `POST /wallpaper-engine/api/state` 里的 `renderer` 字段是页面自检：构建号（`build`）、主题规则长度、
 `data-dsh-wallpaper` 标记、计算后的 `body` / 框架 / 侧栏 / 阅读区背景色、壁纸层的 `z-index`、

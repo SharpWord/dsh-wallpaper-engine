@@ -78,25 +78,29 @@ description:
 ```markdown
 ## dsh-wallpaper-engine
 
-Wallpaper Engine (Steam) integration for DeepSeek Harness.
+Wallpaper Engine (Steam) integration for DeepSeek Harness — and it still works without Wallpaper Engine.
 
 - Host half finds Steam + Wallpaper Engine from the registry / `libraryfolders.vdf`, reads the per-monitor
   active wallpaper out of WE's `config.json`, and lists Workshop (`content/431960`) + local project wallpapers.
   It serves media through a `webServer` prefix route with `Range` support, fenced to the WE install root.
+- Without Wallpaper Engine it creates `%USERPROFILE%\Pictures\dsh-wallpapers`, scans the pictures and videos
+  dropped into it, and shows that path in the settings page so the user never has to find Steam themselves.
+  The folder is added to the `/media` allow-list.
 - Client half paints one layer behind the whole window (`shell.overlay` → portal, `z-index: -3`), overrides the
   theme's fill tokens so panels become translucent glass, adds per-block `backdrop-filter` blur, and solves text
   colours against the measured wallpaper luminance (black/white/grey ladder, WCAG contrast).
 - Settings page (`settings.section`, label 壁纸): follow what WE has active or pin one from the library,
-  density / blur / scrim / fit / video / look presets, per-block blur, and a hook for WE's own playback.
-- Nothing is written to Wallpaper Engine; it only reads `config.json` and the wallpaper files.
+  a drop-in folder card (path, open / copy / rescan), density / blur / scrim / fit / video / look presets,
+  per-block blur, and a hook for WE's own playback.
+- Nothing is written to Wallpaper Engine; the drop-in folder is only created once, and never modified after that.
 
 Install:
 
 ```
-dsh plugin add github:SharpWord/dsh-wallpaper-engine
+dsh plugin --profile desktop add github:SharpWord/dsh-wallpaper-engine
 ```
 
-Verified on dsh-desktop 0.2.1-rc.2 (Windows, Wallpaper Engine 2.x, scene + video wallpapers).
+Verified on dsh-desktop 0.2.1-rc.2 (Windows, Wallpaper Engine 2.x, scene + video wallpapers, and no-WE mode).
 The repo also contains an in-page self test (`POST /wallpaper-engine/api/verify`) covering 28 checks.
 ```
 

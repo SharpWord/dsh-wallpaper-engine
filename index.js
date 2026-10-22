@@ -13,7 +13,8 @@
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { snapshot, invalidate, resolveMedia, samePath } from './discovery.js'
+import { execFile } from 'node:child_process'
+import { snapshot, invalidate, resolveMedia, samePath, ensureLocalFolder } from './discovery.js'
 
 const ROUTE_PREFIX = '/wallpaper-engine/api'
 const MAX_BODY_BYTES = 64 * 1024
@@ -146,6 +147,7 @@ function stateView(value) {
     libraries: value.libraries,
     configPath: value.configPath,
     workshopRoot: value.workshopRoot,
+    folder: value.folder,
     user: value.user,
     monitors,
     counts: value.counts,
@@ -164,6 +166,7 @@ function libraryView(value) {
     counts: value.counts,
     workshopRoot: value.workshopRoot,
     weDir: value.weDir,
+    folder: value.folder,
     scannedAt: value.scannedAt,
     warnings: value.warnings,
   }
@@ -184,6 +187,39 @@ function createApi() {
       invalidate()
       const value = await snapshot({ force: true })
       return libraryView(value)
+    },
+    /**
+     * Create the drop-in folder and report where it is. This is the path that
+     * makes the plugin work with no Wallpaper Engine at all, so the page shows
+     * it verbatim instead of asking the user to hunt for it.
+     */
+    async folder() {
+      const info = await ensureLocalFolder()
+      invalidate()
+      const value = await snapshot({ force: true })
+      return {
+        path: info.dir,
+        created: info.created,
+        writable: info.writable,
+        count: value.folder ? value.folder.count : 0,
+        installed: value.weDir !== '',
+        items: value.items.filter((item) => item.source === 'folder').map(slim),
+      }
+    },
+    /** Reveal the drop-in folder in Explorer (best effort; Windows only). */
+    async openFolder() {
+      const info = await ensureLocalFolder()
+      let opened = false
+      if (process.platform === 'win32') {
+        try {
+          // The callback swallows an async spawn failure instead of crashing the Host.
+          execFile('explorer.exe', [info.dir], () => {})
+          opened = true
+        } catch {
+          /* the path still goes back to the page, which shows it as text */
+        }
+      }
+      return { path: info.dir, opened }
     },
     async report(payload) {
       renderer = { at: new Date().toISOString(), ...cleanReport(payload) }

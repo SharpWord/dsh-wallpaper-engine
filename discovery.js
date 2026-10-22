@@ -22,10 +22,19 @@ export const WE_APP_ID = '431960'
 const CACHE_TTL_MS = 15_000
 
 /** Wallpaper kinds we understand. */
-const KINDS = new Set(['scene', 'video', 'web', 'app'])
+const KINDS = new Set(['scene', 'video', 'web', 'app', 'image'])
 
 /** Image extensions a project preview may use. */
 const PREVIEW_NAMES = ['preview.gif', 'preview.jpg', 'preview.jpeg', 'preview.png', 'preview.webp', 'preview.bmp']
+
+/** Picture extensions the drop-in folder accepts. */
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif'])
+
+/** Video extensions the drop-in folder accepts. */
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.webm', '.mov', '.ogv', '.mkv', '.avi'])
+
+/** Name of the folder that works without Wallpaper Engine installed. */
+const FOLDER_NAME = 'dsh-wallpapers'
 
 let cache = null
 
@@ -62,6 +71,135 @@ async function isDirectory(target) {
   } catch {
     return false
   }
+}
+
+/** Current user's home directory; `os.tmpdir()` when it cannot be resolved. */
+function homeDir() {
+  try {
+    return os.homedir() || process.env.USERPROFILE || os.tmpdir()
+  } catch {
+    return process.env.USERPROFILE || os.tmpdir()
+  }
+}
+
+/** Expand `%VAR%` segments the registry returns for expandable strings. */
+function expandEnv(value) {
+  return String(value || '').replace(/%([^%]+)%/g, (whole, name) => process.env[name] ?? whole)
+}
+
+/** Resolved drop-in folder, cached after the first lookup. */
+let folderCache = ''
+
+/**
+ * The folder that works without Wallpaper Engine: any picture or video dropped
+ * in here becomes a wallpaper. Lives under the user's Pictures folder so the
+ * user can find it from Explorer without being told a path — and follows a
+ * redirected Pictures folder (OneDrive "Known Folder Move") instead of
+ * inventing a second, empty one.
+ */
+export async function resolveFolderPath() {
+  if (folderCache) return folderCache
+  const override = (process.env.DSH_WALLPAPER_FOLDER || '').trim()
+  if (override) {
+    folderCache = path.resolve(override)
+    return folderCache
+  }
+  // `User Shell Folders` holds the live location; `Shell Folders` is the legacy copy.
+  const known = expandEnv(
+    await registryValue('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders', 'My Pictures'),
+  ).trim()
+  const base = known !== '' ? known : path.join(homeDir(), 'Pictures')
+  folderCache = path.join(base, FOLDER_NAME)
+  return folderCache
+}
+
+/** Same path as `resolveFolderPath()`, sync — falls back before the first lookup. */
+export function localFolderPath() {
+  if (folderCache) return folderCache
+  return path.join(homeDir(), 'Pictures', FOLDER_NAME)
+}
+
+/** The readme dropped into the folder so its purpose is obvious in Explorer. */
+const FOLDER_README = [
+  'dsh-wallpaper-engine — 本地壁纸文件夹',
+  '',
+  '把图片或视频放进这个文件夹，然后在 DSH 里打开「壁纸」设置点一次“重新扫描”，',
+  '它们就会出现在壁纸库里，不需要安装 Wallpaper Engine。',
+  '',
+  '支持的图片格式：.jpg .jpeg .png .gif .webp .bmp .avif',
+  '支持的视频格式：.mp4 .m4v .webm .mov .ogv .mkv .avi',
+  '',
+  '子文件夹里的文件不会被扫描；只扫描本层文件。',
+  'this README is recreated automatically and can be deleted.',
+  '',
+].join('\r\n')
+
+/** Create the drop-in folder (plus its readme) when missing; never throws. */
+export async function ensureLocalFolder() {
+  const dir = await resolveFolderPath()
+  let created = false
+  let writable = true
+  if (!(await isDirectory(dir))) {
+    try {
+      await fsp.mkdir(dir, { recursive: true })
+      created = true
+    } catch {
+      writable = false
+    }
+  }
+  if (writable) {
+    const readme = path.join(dir, 'README.txt')
+    if (!(await isFile(readme))) {
+      try {
+        await fsp.writeFile(readme, FOLDER_README, 'utf8')
+      } catch {
+        /* a read-only folder still serves the files already in it */
+      }
+    }
+  }
+  return { dir, created, writable }
+}
+
+/** One wallpaper item from a loose file in the drop-in folder. */
+function folderItemOf(dir, name) {
+  const file = path.join(dir, name)
+  const extension = path.extname(name).toLowerCase()
+  const video = VIDEO_EXTENSIONS.has(extension)
+  const previewKind = video ? '' : extension === '.gif' ? 'gif' : 'image'
+  return {
+    id: `folder:${name.toLowerCase()}`,
+    source: 'folder',
+    workshopId: null,
+    title: path.basename(name, path.extname(name)),
+    kind: video ? 'video' : 'image',
+    tags: [],
+    schemecolor: '',
+    dir,
+    file,
+    preview: video ? '' : file,
+    previewKind,
+    playFile: file,
+    playKind: video ? 'video' : 'image',
+    workshopUrl: '',
+  }
+}
+
+/** Every loose picture / video in the drop-in folder. */
+async function listFolder(dir) {
+  const items = []
+  let entries
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true })
+  } catch {
+    return items
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    const extension = path.extname(entry.name).toLowerCase()
+    if (!IMAGE_EXTENSIONS.has(extension) && !VIDEO_EXTENSIONS.has(extension)) continue
+    items.push(folderItemOf(dir, entry.name))
+  }
+  return items
 }
 
 /** Read one registry string value; '' when unavailable. */
@@ -293,7 +431,7 @@ function userSection(config) {
 
 /** Count items per kind. */
 export function countKinds(items) {
-  const counts = { scene: 0, video: 0, web: 0, app: 0, all: items.length }
+  const counts = { scene: 0, video: 0, web: 0, app: 0, image: 0, all: items.length }
   for (const item of items) counts[item.kind] = (counts[item.kind] || 0) + 1
   return counts
 }
@@ -324,6 +462,11 @@ async function discoverAll() {
     }
   }
 
+  // The drop-in folder is created before the Wallpaper Engine branch so the
+  // "not installed" warning can name it: it is the whole fallback path.
+  const folder = await ensureLocalFolder()
+  if (!folder.writable) warnings.push(`could not write the drop-in folder: ${folder.dir}`)
+
   let user = null
   let configPath = ''
   let monitors = []
@@ -339,14 +482,16 @@ async function discoverAll() {
       warnings.push(`could not read config.json: ${error && error.message ? error.message : String(error)}`)
     }
   } else {
-    warnings.push('Wallpaper Engine was not found in any Steam library.')
+    warnings.push(`Wallpaper Engine was not found in any Steam library; drop pictures into ${folder.dir} instead.`)
   }
 
   const items = []
   if (resolvedWorkshopRoot !== '') items.push(...(await listWorkshop(resolvedWorkshopRoot)))
   if (weDir !== '') items.push(...(await listLocal(weDir)))
+  if (folder.writable) items.push(...(await listFolder(folder.dir)))
   items.sort((left, right) => left.title.localeCompare(right.title, 'zh-Hans-CN'))
 
+  const folderCount = items.filter((item) => item.source === 'folder').length
   return {
     steamRoot,
     libraries,
@@ -357,6 +502,12 @@ async function discoverAll() {
     monitors,
     items,
     counts: countKinds(items),
+    folder: {
+      path: folder.dir,
+      count: folderCount,
+      created: folder.created,
+      writable: folder.writable,
+    },
     warnings,
     scannedAt: new Date().toISOString(),
   }
@@ -375,6 +526,7 @@ export function mediaRoots(state) {
   const roots = []
   if (state && state.weDir) roots.push(path.resolve(state.weDir))
   if (state && state.workshopRoot) roots.push(path.resolve(state.workshopRoot))
+  if (state && state.folder && state.folder.path) roots.push(path.resolve(state.folder.path))
   return roots
 }
 
@@ -400,4 +552,15 @@ export async function resolveMedia(state, raw) {
   return real
 }
 
-export default { WE_APP_ID, snapshot, invalidate, resolveMedia, mediaRoots, countKinds, samePath }
+export default {
+  WE_APP_ID,
+  snapshot,
+  invalidate,
+  resolveMedia,
+  mediaRoots,
+  countKinds,
+  samePath,
+  localFolderPath,
+  resolveFolderPath,
+  ensureLocalFolder,
+}
