@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b109'
+    const BUILD = 'b111'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -138,7 +138,8 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         inkOff: 'Theme default',
         inkLevels: 'Tier contrast',
         inkRatio: 'Contrast',
-        inkFallback: 'too pale here, using the solved colour',
+        inkPick: 'your pick',
+        inkFallback: 'faint on this wallpaper, still used',
         scrim: 'Dim',
         fit: 'Fit',
         fitAuto: 'Auto',
@@ -243,7 +244,8 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         inkOff: '主题默认',
         inkLevels: '层级对比',
         inkRatio: '对比度',
-        inkFallback: '在这里太淡，已改用自动色',
+        inkPick: '所选颜色',
+        inkFallback: '在这张壁纸上偏淡，仍按所选使用',
         scrim: '压暗',
         fit: '显示方式',
         fitAuto: '自适应',
@@ -1373,7 +1375,9 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           add('shell.composerSeat', false, (error && error.message) || 'seat check failed')
         }
         const ink = inkFor(effectiveLuminance('light', surfaces().layer1), 'light')
-        add('theme.ink', Number(ink.contrast) >= 4.4, JSON.stringify(ink))
+        // A custom pick is allowed to be faint — that is the whole point of the
+        // row — so the pass condition is "readable, or knowingly faint".
+        add('theme.ink', Number(ink.contrast) >= 4.4 || ink.warn === true, JSON.stringify(ink))
 
         // The three surfaces the one ink colour has to survive.
         const inkScopes = [
@@ -1401,6 +1405,9 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           const inkSnapshot = { inkMode: settings.inkMode, inkColor: settings.inkColor, inkLevels: settings.inkLevels }
           const theme = 'light'
           const background = () => effectiveLuminance(theme, surfaces().layer1)
+          // The tier gap only exists when the colour can spare the contrast; a
+          // faint custom pick collapses every tier to full, so solve it first.
+          previewSettings({ inkMode: 'auto' })
           previewSettings({ inkLevels: 0 })
           const flat = inkFor(background(), theme)
           previewSettings({ inkLevels: 100 })
@@ -1418,17 +1425,18 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           const picked = inkFor(background(), theme)
           add('ink.custom', picked.primary === '#0b0d11' && picked.ladder === 'dark',
             `${picked.primary} ladder=${picked.ladder}`)
-          // …but a pick the theme cannot carry gives way to the solved extreme,
-          // and says so: white text on a light theme's glass is invisible.
+          // …and it is used even when it is faint: the row exists so a person can
+          // choose a colour `auto` would never pick, so nothing swaps it out. The
+          // only thing that changes is the warning in the readout.
           previewSettings({ inkMode: 'custom', inkColor: '#ffffff' })
           const weak = inkFor(background(), theme)
-          add('ink.fallback', weak.base !== '#ffffff' && weak.fellBack === true && weak.contrast >= 4.4,
-            `picked=#ffffff used=${weak.base} contrast=${weak.contrast} fellBack=${weak.fellBack}`)
+          add('ink.customKept', weak.base === '#ffffff' && weak.warn === true,
+            `picked=#ffffff used=${weak.base} contrast=${weak.contrast} warn=${weak.warn}`)
           previewSettings(inkSnapshot)
         } catch (error) {
           add('ink.levels', false, (error && error.message) || 'ink levels failed')
           add('ink.custom', false, (error && error.message) || 'ink custom failed')
-          add('ink.fallback', false, (error && error.message) || 'ink fallback failed')
+          add('ink.customKept', false, (error && error.message) || 'ink kept failed')
         }
 
         // `off` must hand the label tokens back to the theme: no override in the
@@ -1448,6 +1456,10 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // where the wallpaper sits right at the readability crossover, at least
         // be the better of the two extremes (nothing more is possible there).
         try {
+          // Solved mode on purpose: this row is about what `auto` can reach, and
+          // a faint custom pick would (rightly) fail a floor it never promised.
+          const snapshot = { inkMode: settings.inkMode }
+          previewSettings({ inkMode: 'auto' })
           const theme = 'light'
           const rows = inkScopes.map(([name, alpha]) => {
             const background = effectiveLuminance(theme, alpha)
@@ -1456,6 +1468,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
             const otherRatio = contrastOf(luminanceOf(other), background)
             return { name, ratio: auto.contrast, otherRatio }
           })
+          previewSettings(snapshot)
           const ok = rows.every((row) => row.ratio >= 4.4 || row.ratio >= row.otherRatio)
           add(
             'ink.contrastFloor',
@@ -1510,9 +1523,14 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         // than by flipping the attribute: a temporary flip flashes the whole UI
         // (and the desktop caption) for a check that is pure arithmetic anyway.
         try {
+          // Solved mode: a custom pick is the user's business, not a promise that
+          // both themes reach 4.5:1.
+          const snapshot = { inkMode: settings.inkMode }
+          previewSettings({ inkMode: 'auto' })
           const chrome = surfaces().sidebar
           const lightPick = inkFor(effectiveLuminance('light', chrome), 'light')
           const darkPick = inkFor(effectiveLuminance('dark', chrome), 'dark')
+          previewSettings(snapshot)
           const darkRatio = contrastOf(luminanceOf(darkPick.primary), effectiveLuminance('dark', chrome))
           add(
             'theme.darkFlip',
@@ -2172,31 +2190,37 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
      * The colour in force: the user's pick in `custom`, the solved extreme
      * otherwise.
      *
-     * A pick that cannot clear 3:1 on any panel is not used — white on a light
-     * theme's 58% glass is 1.3:1, which reads as white text on white and is
-     * exactly what the "white film" complaint looked like. The window keeps
-     * working text and says so in the readout instead of trusting the pick.
+     * A custom pick is NEVER replaced. `auto` solves the extreme that survives
+     * the worst panel; a person who picks white on a bright wallpaper has said
+     * something `auto` cannot say, and silently swapping that colour out is
+     * exactly what made this row look dead. The reading is reported instead
+     * (`inkWarn`), so the window says "this is faint" without taking the choice
+     * away.
      */
     function inkBaseFor(themeKey) {
       const solved = autoInkBase(themeKey)
       if (settings.inkMode !== 'custom') return solved
       const custom = String(settings.inkColor)
       if (!/^#[0-9a-fA-F]{6}$/.test(custom)) return solved
+      return custom
+    }
+
+    /** Contrast the pick actually reaches on its worst panel, for the readout. */
+    function inkPickContrast(themeKey) {
+      const custom = String(settings.inkColor)
+      if (settings.inkMode !== 'custom' || !/^#[0-9a-fA-F]{6}$/.test(custom)) return 99
       const levels = surfaces()
       const ink = luminanceOf(custom)
-      const worst = [levels.sidebar, levels.content, levels.glass].reduce(
+      return [levels.sidebar, levels.content, levels.glass].reduce(
         (low, alpha) => Math.min(low, contrastOf(ink, effectiveLuminance(themeKey, alpha))),
         99,
       )
-      return worst >= 3 ? custom : solved
     }
 
-    /** True when the user picked a colour this theme cannot carry. */
-    function inkFellBack(themeKey) {
+    /** True when the user's own pick is faint on this theme; it is still used. */
+    function inkWarn(themeKey) {
       if (settings.inkMode !== 'custom') return false
-      const custom = String(settings.inkColor)
-      if (!/^#[0-9a-fA-F]{6}$/.test(custom)) return false
-      return inkBaseFor(themeKey) !== custom
+      return inkPickContrast(themeKey) < 3
     }
 
     /**
@@ -2261,7 +2285,8 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         tertiary: inkPaint(base, 2, basis.background),
         contrast: Math.round(contrastOf(luminanceOf(base), background) * 100) / 100,
         basis: basis.name,
-        fellBack: inkFellBack(themeKey),
+        warn: inkWarn(themeKey),
+        pickContrast: Math.round(inkPickContrast(themeKey) * 100) / 100,
         ladder: luminanceOf(base) < 0.5 ? 'dark' : 'light',
       }
     }
@@ -4280,7 +4305,8 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
             'span',
             { className: 'dsh-we-hint' },
             `${t('inkRatio')} ${inkSample.contrast}:1 · ${inkSample.base}` +
-              (inkSample.fellBack ? ` · ${t('inkFallback')}` : ''),
+              (settings.inkMode === 'custom' ? ` · ${t('inkPick')} ${inkSample.pickContrast}:1` : '') +
+              (inkSample.warn ? ` · ${t('inkFallback')}` : ''),
           ),
         ),
 
