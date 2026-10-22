@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b102'
+    const BUILD = 'b104'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -976,6 +976,20 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     /** Resolve after `ms`, so a UI transition has time to settle. */
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+    /**
+     * Poll `predicate` until it holds. Fixed sleeps make the self test flaky on a
+     * busy main thread: the click is handled, React re-renders a tick later, and
+     * a 260 ms guess sometimes looks at the old DOM.
+     */
+    async function until(predicate, timeoutMs) {
+      const deadline = Date.now() + (timeoutMs || 1600)
+      while (Date.now() < deadline) {
+        if (predicate()) return true
+        await wait(60)
+      }
+      return Boolean(predicate())
+    }
+
     /** Alpha channel of a computed colour (`color(srgb … / a)` or `rgba()`). */
     function alphaOf(color) {
       const text = String(color || '')
@@ -1364,8 +1378,17 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
             `sidebar ${low.sidebar}→${high.sidebar} · layer1 ${low.layer1}→${high.layer1} · ` +
               `content ${low.content}→${high.content} · glass ${low.glass}→${high.glass}`,
           )
+          // …and the bottom of the knob means NOTHING is filled: "everything at
+          // the lowest" has to look like the bare wallpaper, not like a 15%
+          // white veil, so every tier must reach zero there.
+          add(
+            'slider.floor',
+            Object.values(low).every((value) => value === 0),
+            `low=${JSON.stringify(low)}`,
+          )
         } catch (error) {
           add('slider.strength', false, (error && error.message) || 'surfaces() failed')
+          add('slider.floor', false, (error && error.message) || 'surfaces() failed')
         }
         try {
           const blurOn = blockBlur()
@@ -1667,7 +1690,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         } else {
           selfTestStep = 'sidebar.panel: click'
           glyph.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-          await wait(260)
+          await until(() => Boolean(document.querySelector('.dsh-we-side')))
           selfTestStep = 'sidebar.panel: opened'
           const opened = Boolean(document.querySelector('.dsh-we-side'))
           const rows = document.querySelectorAll('.dsh-we-side .dsh-we-tile').length
@@ -1676,7 +1699,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           const back = document.querySelector('.dsh-we-side-back')
           selfTestStep = 'sidebar.panel: back'
           if (back) back.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-          await wait(260)
+          await until(() => !document.querySelector('.dsh-we-side'))
           selfTestStep = 'sidebar.panel: closed'
           const closed = !document.querySelector('.dsh-we-side')
           const sessionsBack = Boolean(document.querySelector('[class*="_treeBody"]'))
@@ -1702,7 +1725,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           add('sidebar.rowClick', true, 'row missing')
         } else {
           row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-          await wait(520)
+          await until(() => Boolean(document.querySelector('.dsh-we-side')))
           const opened = Boolean(document.querySelector('.dsh-we-side'))
           const mainStuck = Boolean(document.querySelector('.dsh-we-page:not(.dsh-we-compact)'))
           const layout = layoutService()
@@ -2166,20 +2189,25 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
         100,
         DEFAULTS.surface,
       )
-      const layer1 = clamp(Math.round(6 + strength * 0.78), 10, 90, 47)
-      const glass = clamp(Math.round(20 + strength * 0.74), 26, 96, 58)
+      // The knob reaches ZERO at the bottom: at the minimum the wallpaper is the
+      // interface, nothing is filled — which is the only reading of "全部调到最低"
+      // that means anything. A square root keeps 52 on exactly the numbers this
+      // build had before, so the default look does not move, while the low end
+      // now runs all the way down instead of stopping at a 15% floor.
+      const t = Math.sqrt(clamp((strength - 20) / 80, 0, 1, 0.4))
+      const scale = (max) => Math.round(max * t)
       return {
-        sidebar: clamp(Math.round(10 + strength * 0.28), 8, 42, 25),
-        layer1,
-        layer2: clamp(Math.round(14 + strength * 0.78), 18, 94, 55),
-        layer3: glass,
-        glass,
-        code: clamp(layer1 + 6, 12, 92, 53),
+        sidebar: scale(40),
+        layer1: scale(74),
+        layer2: scale(87),
+        layer3: scale(92),
+        glass: scale(92),
+        code: scale(84),
         // The reading column itself: thin enough to keep the picture, thick
         // enough that tertiary trace text is not floating straight on the photo.
-        content: clamp(Math.round(10 + strength * 0.34), 12, 46, 28),
-        navActive: clamp(Math.round(20 + strength * 0.7), 26, 94, 56),
-        navHover: clamp(Math.round(12 + strength * 0.6), 16, 92, 43),
+        content: scale(44),
+        navActive: scale(89),
+        navHover: scale(68),
       }
     }
 

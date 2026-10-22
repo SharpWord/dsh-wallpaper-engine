@@ -187,6 +187,12 @@ Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列�
 浮层面（胶囊、输入框、菜单、弹层）最实 —— 但**没有一处是实心白**：
 列背后的壁纸本来就被分块模糊过，半透明填充压上去就是磨砂效果。
 
+**最底端等于完全透明**：滑块拉到 20 时所有面板填充都是 0%，窗口上只剩壁纸和分块模糊。
+曲线是 `fill = max × √((浓度 − 20) / 80)`，所以 52 这个默认位置算出来的值和旧版逐项相同
+（侧栏 25%、阅读区 28%、卡片 47%…），只有低端被放开：以前有个 15% 左右的下限，
+「什么都调最低」也还是蒙着一层白。唯一保留下限的是改动文件卡片（最低 26%），
+因为它是盖在正文上的第二层字，全透明会串字。
+
 **窗口本身不填色**，而且有两层原因、两个都修了：
 
 1. `--dsw-alias-bg-base` 以前按浓度铺了 16% 的白，直接盖在整窗上；
@@ -197,20 +203,20 @@ Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列�
 现在 `--dsw-specific-sidebar-fill` 在 `body` 上是透明的，只额外挂在 `[class*="sidebarCol"]` 上，
 填充属于侧栏本身；最外层 frame 保持透明。等价地说：**预览卡画什么，窗口就画什么**。
 
-| 层 | 位置 | 用到的 token | 浓度 52（默认） | 浓度 100 |
-| --- | --- | --- | --- | --- |
-| 外框 | 窗口、会话底色（含最外层 `_frame`） | `--dsw-alias-bg-base`、`--dsw-specific-sidebar-fill` | 0（透明） | 0（透明） |
-| 外框 | 左侧栏（`[class*="sidebarCol"]` 内） | `--dsw-specific-sidebar-fill` | 25% | 38% |
-| 阅读区 | 中间列本身（轨迹/正文直接坐在这上面） | `--dsh-we-content-fill` | 28% | 44% |
-| 内容 | 卡片、气泡、平台模块 | `--dsw-alias-bg-layer-1`、`--dsw-specific-bubble`、`--dsw-alias-bg-module-platform` | 47% | 84% |
-| 内容 | 代码块 | `--dsw-alias-markdown-code-block` | 53% | 90% |
-| 内容 | 行内代码、代码块横幅 | `--dsw-alias-markdown-inline-code`、`markdown-code-block-banner` | 53% | 90% |
-| 内容 | 弹窗、设置卡片 | `--dsw-alias-bg-layer-2` | 55% | 92% |
-| 浮层 | 选中项、浮起卡片 | `--dsw-alias-bg-layer-3`、`--dsw-alias-bg-overlay` | 58% | 96% |
-| 浮层 | 输入框、统计胶囊、菜单、设置面板 | `--dsw-specific-input-major`、`--dsh-we-glass`、`--dsw-specific-menu` | 58% | 96% |
-| 浮层 | 「新会话」按钮、浮起按钮 | `--dsw-alias-button-elevated-fill`、`--dsw-alias-button-floating-fill` | 58% | 96% |
-| 浮层 | 菜单分组标题、layer-4 悬停 | `--dsw-alias-menu-group-header-fill`、`--dsw-alias-bg-layer-4` | 58% | 96% |
-| 浮层 | 侧栏选中/悬停 | `--dsw-specific-sidebar-nav-item-active/-hover` | 56% / 43% | 94% / 72% |
+| 层 | 位置 | 用到的 token | 浓度 20（最底） | 浓度 52（默认） | 浓度 100 |
+| --- | --- | --- | --- | --- | --- |
+| 外框 | 窗口、会话底色（含最外层 `_frame`） | `--dsw-alias-bg-base`、`--dsw-specific-sidebar-fill` | 0（透明） | 0（透明） | 0（透明） |
+| 外框 | 左侧栏（`[class*="sidebarCol"]` 内） | `--dsw-specific-sidebar-fill` | 0 | 25% | 40% |
+| 阅读区 | 中间列本身（轨迹/正文直接坐在这上面） | `--dsh-we-content-fill` | 0 | 28% | 44% |
+| 内容 | 卡片、气泡、平台模块 | `--dsw-alias-bg-layer-1`、`--dsw-specific-bubble`、`--dsw-alias-bg-module-platform` | 0 | 47% | 74% |
+| 内容 | 代码块 | `--dsw-alias-markdown-code-block` | 0 | 53% | 84% |
+| 内容 | 行内代码、代码块横幅 | `--dsw-alias-markdown-inline-code`、`markdown-code-block-banner` | 0 | 53% | 84% |
+| 内容 | 弹窗、设置卡片 | `--dsw-alias-bg-layer-2` | 0 | 55% | 87% |
+| 浮层 | 选中项、浮起卡片 | `--dsw-alias-bg-layer-3`、`--dsw-alias-bg-overlay` | 0 | 58% | 92% |
+| 浮层 | 输入框、统计胶囊、菜单、设置面板 | `--dsw-specific-input-major`、`--dsh-we-glass`、`--dsw-specific-menu` | 0 | 58% | 92% |
+| 浮层 | 「新会话」按钮、浮起按钮 | `--dsw-alias-button-elevated-fill`、`--dsw-alias-button-floating-fill` | 0 | 58% | 92% |
+| 浮层 | 菜单分组标题、layer-4 悬停 | `--dsw-alias-menu-group-header-fill`、`--dsw-alias-bg-layer-4` | 0 | 58% | 92% |
+| 浮层 | 侧栏选中/悬停 | `--dsw-specific-sidebar-nav-item-active/-hover` | 0 | 56% / 43% | 89% / 68% |
 
 ### 玻璃质感
 
@@ -340,7 +346,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 | 内容 | 正常流 | 列背景、文字、卡片 |
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（52 项）
+### 自测（53 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -355,7 +361,8 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 后者就是「只改 bg-base 之后还是发灰」那个 bug 的回归测试）、主题半透明与文字反差、
 标题栏方角、徽标隐藏、分块模糊、侧栏「无包含块 / 收起 / 收起后按钮可点 / 再展开」、开关关掉后主题回滚为不透明、
 深色主题的自动配字（纯算术，不再临时切换页面主题）、字体颜色七项（`ink.unified` / `ink.levels` /
-`ink.custom` / `ink.fallback` / `ink.off` / `ink.contrastFloor` / `ink.ui`）、浓度与分块模糊两个旋钮是否真的改变生成规则、
+`ink.custom` / `ink.fallback` / `ink.off` / `ink.contrastFloor` / `ink.ui`）、浓度与分块模糊两个旋钮是否真的改变生成规则
+（`slider.strength` 对比两端，`slider.floor` 断言最低档每一层都归零）、
 壁纸库排序规则（`library.usageOrder`，合成数据）、五种显示方式（`fit.modes`）、缩放与取景的上下限
 （`frame.clamps`）及「设置值 = 实际生效值」（`frame.applied`）、`Range` 206 流式取字节、页面运行时错误。
 
@@ -437,7 +444,7 @@ Windows 标题栏布局下，布局样式会给主区左上角加 16px 圆角（
 ## 自检（宿主侧触发）
 
 `POST /wallpaper-engine/api/verify` 会下发一次性令牌；页面每 5 秒 `ping` 一次，读到新令牌就跑一遍
-52 项自检（主题、注入的 CSS 长度、两个主题的规则、遮罩、文字阶梯、分块模糊是否只作用在伪元素上、
+53 项自检（主题、注入的 CSS 长度、两个主题的规则、遮罩、文字阶梯、分块模糊是否只作用在伪元素上、
 **窗口没有被填色**（`shell.clear` / `shell.frame`）、侧栏收起/展开后按钮是否仍可点、
 开关关闭后 token 是否完全还原、媒体 Range 请求、预览卡是否画出、
 **壁纸只有一张**（`preview.singleMedia` / `backdrop.singleMedia`）、预览与窗口取景是否一致
