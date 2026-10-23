@@ -11,6 +11,18 @@
 - 支持 `scene` / `video` / `web` / `application` 四类壁纸；视频壁纸会真的播放（可静音/暂停）。
 - 两种模式：**跟随**（用 Wallpaper Engine 里当前激活的那张，支持多显示器）或**固定**（从壁纸库里挑一张）。
 
+## 长什么样
+
+同一套插件，换壁纸就是换风格 —— 面板始终是同一层薄雾，字色跟着壁纸自动走：
+
+| | |
+| --- | --- |
+| ![晨光森林](assets/screenshots/shot-1.jpg) | ![夜色冷蓝](assets/screenshots/shot-2.jpg) |
+| 亮部很多的一张：字自动转成深色，卡片仍然透 | 大面积冷蓝：字自动转成浅色，输入框和胶囊浮起来 |
+| ![人像](assets/screenshots/shot-3.jpg) | ![落日](assets/screenshots/shot-4.jpg) |
+| 细节密集的人像：分块模糊压住背后的纹理，正文不打架 | 强对比：左侧暗、右侧过曝，遮罩只在过曝那侧出现 |
+
+
 ## 安装
 
 ```powershell
