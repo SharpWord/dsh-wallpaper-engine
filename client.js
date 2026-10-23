@@ -33,7 +33,7 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
     const POLL_MS = 12_000
 
     /** Build stamp: every renderer report carries it, so a stale bundle shows. */
-    const BUILD = 'b119'
+    const BUILD = 'b120'
 
     /** Defaults. `follow` mirrors Wallpaper Engine out of the box. */
     const DEFAULTS = {
@@ -1336,8 +1336,14 @@ const useLayoutEffect = React.useLayoutEffect || useEffect
           add('host.state', Boolean(value && value.installed) && Number(value.counts && value.counts.all) > 0,
             `installed=${value && value.installed} items=${value && value.counts && value.counts.all}`)
           add('host.mount', Boolean(value && value.mount && value.mount.mode !== 'none'), JSON.stringify(value && value.mount))
+          // The four bundled stills are what a fresh install shows before the
+          // user opens Wallpaper Engine; a packaging mistake would silently
+          // ship an empty folder, so assert the count.
+          add('folder.starters', Number(value && value.folder && value.folder.starters) === 4,
+            `starters=${value && value.folder && value.folder.starters} seeded=${value && value.folder && value.folder.seeded} count=${value && value.folder && value.folder.count}`)
         } catch (error) {
           add('host.state', false, (error && error.message) || 'state failed')
+          add('folder.starters', false, (error && error.message) || 'state failed')
         }
         try {
           const value = await callHost('library')

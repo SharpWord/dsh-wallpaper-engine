@@ -56,6 +56,17 @@ plugin_manager install_bundle target=<插件目录的绝对路径>
 
 Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列出创意工坊壁纸和投放文件夹里的壁纸。
 
+### 自带的 4 张
+
+插件包里带着 4 张 1920×1080 的静态壁纸（`starters/*.jpg`，每张 220–345 KB）。
+
+- 文件夹是**空的**（第一次装、还没放过东西）时，第一次扫描会把 4 张复制进去，并写一个
+  `.starters-seeded` 标记；以后你删掉它们、换成自己的图片，插件都不会再塞回来。
+- 文件夹里**已经有你自己的文件**时，一张都不复制，只写标记和 `README.txt`——不往你的收藏里加东西。
+- 想手动要回来：删掉 `.starters-seeded`，再点一次「重新扫描」。
+- 这 4 张是截取自 Wallpaper Engine 创意工坊的壁纸画面，用于演示与时装，版权归原作者；
+  不想要可以整个删掉，插件照样工作。
+
 路径细节：
 
 - 位置跟随系统真正的「图片」文件夹（`HKCU\...\Explorer\User Shell Folders\My Pictures`），
@@ -70,7 +81,7 @@ Steam 版 Wallpaper Engine 仍然可用——两者共存，库里会同时列�
 | Steam 路径（注册表 `HKCU\Software\Valve\Steam\SteamPath`、`libraryfolders.vdf`） | 定位 Wallpaper Engine 安装目录 |
 | `<WE>/config.json` | 当前每台显示器激活的壁纸、播放设置 |
 | `<WE>/projects`、创意工坊 `content/431960` | 壁纸库列表 |
-| `%USERPROFILE%\Pictures\dsh-wallpapers` | 投放文件夹：没有 Wallpaper Engine 时的壁纸来源（只读，除首次创建文件夹与 `README.txt`） |
+| `%USERPROFILE%\Pictures\dsh-wallpapers` | 投放文件夹：没有 Wallpaper Engine 时的壁纸来源（只读，除首次创建文件夹、写 `README.txt` 与 `.starters-seeded`、以及空文件夹时复制自带 4 张） |
 | 当前 Windows 账户名（`os.userInfo().username`） | **只**用来定位 `config.json` 里属于你那个用户的那一段 |
 
 除此之外不读任何个人文件、不写 Wallpaper Engine 的配置、不发任何遥测或网络请求；
@@ -379,7 +390,7 @@ html[data-dsh-wallpaper="on"] [class*="sidebarCol"]::before { content:""; positi
 （这就是「分块模糊无法调节」的根因）。所以共享底模糊用 `-2`、壁纸用 `-3`（见上表）。
 输入框卡片（`[data-composer-card]`）用同样的写法。
 
-### 自测（56 项）
+### 自测（57 项）
 
 页面里内置了一套自检：`POST /verify` 发一个 token，页面每 5 秒 `POST /ping` 轮询到新 token 就跑一遍，
 把结果发回 `/report`，之后 `POST /state` 里的 `value.renderer.selfTest` 就是完整结论：
@@ -389,7 +400,8 @@ curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0
 curl.exe -s -X POST -H "Content-Type: application/json" --data '{}' http://127.0.0.1:<端口>/wallpaper-engine/api/state
 ```
 
-覆盖：Host 三条接口、壁纸层与媒体是否真的加载（`<video readyState=4>`）、窗口本身没被填色
+覆盖：Host 三条接口（含 `folder.starters`：自带壁纸必须真的是 4 张，打包漏文件会当场失败）、
+壁纸层与媒体是否真的加载（`<video readyState=4>`）、窗口本身没被填色
 （`shell.clear`：`body` 背景必须透明；`shell.frame`：占窗口 ≥90% 的那个元素背景也必须透明 ——
 后者就是「只改 bg-base 之后还是发灰」那个 bug 的回归测试；`shell.composerSeat`：输入框所在的
 seat 不能再画渐变，否则浅色 token 会在输入框上方留一条白条）、主题半透明与文字反差、

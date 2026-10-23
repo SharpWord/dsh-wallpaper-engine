@@ -12,6 +12,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 
 const execFileAsync = promisify(execFile)
 
@@ -157,7 +158,72 @@ export async function ensureLocalFolder() {
       }
     }
   }
-  return { dir, created, writable }
+  const seeded = writable ? await seedStarters(dir) : { seeded: false, starters: 0 }
+  return { dir, created, writable, ...seeded }
+}
+
+/** The four wallpapers that ship with the plugin (`<plugin>/starters`). */
+const STARTER_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'starters')
+const STARTER_MARKER = '.starters-seeded'
+
+/**
+ * Names of the bundled starter wallpapers, in the order they should appear.
+ * Missing directory (an older install, or a package that skipped `starters/`)
+ * simply means "no starters", never an error.
+ */
+async function listStarters() {
+  try {
+    const entries = await fsp.readdir(STARTER_DIR, { withFileTypes: true })
+    return entries
+      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .filter((name) => {
+        const extension = path.extname(name).toLowerCase()
+        return IMAGE_EXTENSIONS.has(extension) || VIDEO_EXTENSIONS.has(extension)
+      })
+      .sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Put the bundled wallpapers into an EMPTY drop-in folder, exactly once.
+ *
+ * A folder that already holds pictures belongs to the user and is never
+ * touched; the marker file makes sure the starters do not come back after
+ * somebody deletes them.
+ */
+async function seedStarters(dir) {
+  const starters = await listStarters()
+  const marker = path.join(dir, STARTER_MARKER)
+  if (await isFile(marker)) return { seeded: false, starters: starters.length }
+  const kept = (await listFolder(dir)).length
+  if (kept > 0) {
+    try {
+      await fsp.writeFile(marker, `kept ${kept} existing file(s)\r\n`, 'utf8')
+    } catch {
+      /* a read-only folder has nothing to seed either */
+    }
+    return { seeded: false, starters: starters.length }
+  }
+  let copied = 0
+  for (const name of starters) {
+    try {
+      await fsp.copyFile(path.join(STARTER_DIR, name), path.join(dir, name))
+      copied += 1
+    } catch {
+      /* one unreadable file must not stop the rest */
+    }
+  }
+  if (copied > 0) {
+    try {
+      await fsp.writeFile(marker, `copied ${copied} starter(s)\r\n`, 'utf8')
+    } catch {
+      /* ignore: the files are already in place */
+    }
+  }
+  return { seeded: copied > 0, starters: starters.length }
 }
 
 /** One wallpaper item from a loose file in the drop-in folder. */
@@ -507,6 +573,8 @@ async function discoverAll() {
       count: folderCount,
       created: folder.created,
       writable: folder.writable,
+      seeded: folder.seeded === true,
+      starters: folder.starters || 0,
     },
     warnings,
     scannedAt: new Date().toISOString(),
